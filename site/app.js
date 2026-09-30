@@ -225,6 +225,39 @@ const map = new maplibregl.Map({
 window.map = map; // handy in the devtools console
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
 
+/**
+ * Rotate and tilt around the point you grabbed (right-drag or Ctrl+drag), not the middle of the screen.
+ * MapLibre's own handler always pivots on the centre, so it's swapped for this one.
+ */
+map.dragRotate.disable();
+map.getCanvasContainer().addEventListener("contextmenu", (e) => e.preventDefault());
+map.getCanvasContainer().addEventListener("mousedown", (e) => {
+  if (!(e.button === 2 || (e.button === 0 && e.ctrlKey))) return;
+  e.preventDefault();
+  const rect = map.getCanvas().getBoundingClientRect();
+  const point = [e.clientX - rect.left, e.clientY - rect.top];
+  let around = map.unproject(point);
+  // grabbed the sky (or something absurdly far away at a steep pitch): fall back to the centre
+  if (!around || around.distanceTo(map.getCenter()) > 200000) around = map.getCenter();
+  const start = { x: e.clientX, y: e.clientY, bearing: map.getBearing(), pitch: map.getPitch() };
+  map.getCanvas().style.cursor = "grabbing";
+
+  const move = (ev) => {
+    map.easeTo({
+      bearing: start.bearing + (ev.clientX - start.x) * 0.8,
+      pitch: clamp(start.pitch - (ev.clientY - start.y) * 0.5, 0, map.getMaxPitch()),
+      around, duration: 0,
+    });
+  };
+  const up = () => {
+    removeEventListener("mousemove", move);
+    removeEventListener("mouseup", up);
+    map.getCanvas().style.cursor = "";
+  };
+  addEventListener("mousemove", move);
+  addEventListener("mouseup", up);
+});
+
 const rider = new maplibregl.Marker({ element: Object.assign(document.createElement("div"), { className: "rider" }) });
 let riderOn = false;
 function showRider(p) {

@@ -8,7 +8,7 @@
  *   -> cut at long straights -> terrain -> climb, gradient -> passes, towns, names, warnings -> score
  */
 
-export const ALGO_VERSION = 2;          // bump when output changes: saved scans from older versions are dropped
+export const ALGO_VERSION = 3;          // bump when output changes: saved scans from older versions are dropped
 
 export const TERRAIN_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 export const OVERPASS = [
@@ -22,7 +22,7 @@ const STEP = 10;                 // resample spacing, m
 const RADIUS_OFFSET = 2;         // bend radius from points 20 m either side
 // Bend kinds, loosest first: [max radius m, name]. Index + 1 is the class stored in `curve`.
 export const BENDS = [[175, "Sweeping"], [100, "Flowing"], [60, "Tight"], [30, "Hairpin-tight"]];
-const SPLIT_STRAIGHT = 2500;     // a straight longer than this ends a section, m
+const SPLIT_STRAIGHT = 4000;     // a straight longer than this ends a section, m (pass-top plateaus stay in)
 const PAD = 150;                 // straight kept at each end of a section, m
 const MIN_LEN = 2500;
 const MIN_CURVY_KM = 1.2;
@@ -40,33 +40,137 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------------ scoring (shared with the UI)
 
+// Every road carries a `bins` string: one fixed-width record per 200 m slice (see encodeBins), so the UI
+// can re-score for any taste and find the best stretch without the engine.
+export const BIN = 200;                  // m per slice
+const PER_BIN = BIN / STEP;              // 10 m samples per slice
+const BIN_CHARS = 10;
+const WINDOW_KM = 15;                    // a road is scored on its best stretch of up to this long
+const GOOD_KM_CAP = 30;                  // good riding beyond this adds nothing more
+const BUILT_UP_KEEP = 0.3;               // bends in villages count 30%: fun to look at, not to ride hard
+
 // Bend weights per kind (sweeping, flowing, tight, hairpin-tight) at the two ends and middle of the taste slider.
 const W_SWEEPERS = [1.6, 1.4, 1.0, 0.6];
 const W_BALANCED = [1.0, 1.3, 1.6, 2.0];
 const W_HAIRPINS = [0.6, 1.0, 1.7, 2.4];
-export const SCORE_REF = 65.0;   // Cormet de Roselend at balanced taste = 100
+export const SCORE_REF = 62.5;           // fixed scale: the best road around Geneva (Col de L'Arpettaz) is about 100
 
 /** Weights for a taste between 0 (fast sweepers) and 1 (tight hairpins); 0.5 is balanced. */
 export function tasteWeights(taste = 0.5) {
   const [a, b, u] = taste < 0.5 ? [W_SWEEPERS, W_BALANCED, taste / 0.5] : [W_BALANCED, W_HAIRPINS, (taste - 0.5) / 0.5];
   return {
     bends: a.map((w, i) => w + (b[i] - w) * u),
-    hairpinBonus: 2 * taste,       // 0 for sweepers, 1 balanced, 2 hairpin lovers
+    hairpinBonus: 2 * taste,             // 0 for sweepers, 1 balanced, 2 hairpin lovers
   };
 }
 
+const b36 = (v) => Math.max(0, Math.min(35, Math.round(v))).toString(36);
+
+/** Slice fields: c = samples per bend class [4], h hairpins, r crests+dips, v view 0-9, p drop-off 0-9, u built-up samples, x viewpoint. */
+function encodeBins(bins) {
+  return bins.map((b) => b.c.map(b36).join("") + b36(b.h) + b36(b.r) + b36(b.v) + b36(b.p) + b36(b.u) + b36(b.x)).join("");
+}
+
+const decoded = new WeakMap();
+function decode(road) {
+  let d = decoded.get(road);
+  if (d) return d;
+  const s = road.bins, bins = [];
+  for (let i = 0; i < s.length; i += BIN_CHARS) {
+    const n = [...s.slice(i, i + BIN_CHARS)].map((ch) => parseInt(ch, 36));
+    bins.push({ c: n.slice(0, 4), h: n[4], r: n[5], v: n[6] / 9, p: n[7] / 9, u: n[8] / PER_BIN, x: n[9] });
+  }
+  // elevation at each slice centre, from the stored profile
+  const cd = [0];
+  for (let i = 1; i < road.coords.length; i++) {
+    const [a, b] = [road.coords[i - 1], road.coords[i]];
+    cd.push(cd[i - 1] + Math.hypot((b[0] - a[0]) * Math.cos(rad(a[1])), b[1] - a[1]) * rad(1) * R_EARTH);
+  }
+  const scale = cd[cd.length - 1] / (bins.length * BIN || 1);
+  const ele = bins.map((_, i) => interp((i + 0.5) * BIN * scale, cd, road.coords.map((c) => c[2])));
+  d = { bins, ele };
+  decoded.set(road, d);
+  return d;
+}
+
+/** Scenery of one slice, 0..1: an open view down over the surroundings, a steep fall-away beside it, a viewpoint. */
+const sliceScenery = (b) => Math.min(1, 0.65 * b.v + 0.35 * b.p + (b.x ? 0.3 : 0));
+
 /**
- * The fun score, as three factors (so the UI can explain it):
- *   bends     weighted km of bends: every 10 m in a bend counts, tighter or looser weighted by taste
- *   mountain  x1 .. x2 for 0 .. 1200 m between the lowest and highest point
- *   hairpins  x1 .. x1.5 for 0 .. 20 hairpins (more or less with taste)
+ * The fun score and everything the UI needs to explain it.
+ *
+ * For the best stretch of up to 15 km:  bends x terrain x scenery x hairpins
+ *   bends     km in bends weighted by tightness for your taste; built-up slices count 30%
+ *   terrain   x1..x2 for 0..1200 m of climb within the stretch, or up to x1.6 for rolling crests and dips
+ *   scenery   x1..x1.5: open views down over the surroundings, drop-offs, viewpoints
+ *   hairpins  x1..x1.5 for 0..20 hairpins (more or less with taste)
+ * then x good km: how much of the road is at least half that good, up to 30 km, with diminishing returns
+ * (6 km x0.63, 15 km x1, 30 km x1.41). Meh stretches neither help nor hurt.
  */
-export function scoreParts(road, taste = 0.5) {
-  const w = tasteWeights(taste);
-  const bends = road.bends.reduce((s, km, i) => s + km * w.bends[i], 0);
-  const mountain = 1 + Math.min(road.eleMax - road.eleMin, 1200) / 1200;
-  const hairpins = 1 + (w.hairpinBonus * Math.min(road.hairpins, 20)) / 40;
-  return { bends, mountain, hairpins, score: Math.round((100 * bends * mountain * hairpins) / SCORE_REF) };
+export function scoreRoad(road, taste = 0.5) {
+  const { bins, ele } = decode(road);
+  const w = tasteWeights(taste), nb = bins.length, binKm = BIN / 1000;
+  const bend = bins.map((b) => b.c.reduce((s, n, k) => s + n * (STEP / 1000) * w.bends[k], 0) * (1 - (1 - BUILT_UP_KEEP) * b.u));
+  const hp = bins.map((b) => b.h * (b.u > 0.5 ? BUILT_UP_KEEP : 1));
+  const scen = bins.map(sliceScenery);
+  const pre = (arr) => arr.reduce((p, v) => (p.push(p[p.length - 1] + v), p), [0]);
+  const [pB, pH, pS, pR] = [pre(bend), pre(hp), pre(scen), pre(bins.map((b) => b.r))];
+  const sum = (p, i, j) => p[j] - p[i];
+
+  const W = Math.max(1, Math.min(nb, Math.round(WINDOW_KM / binKm)));
+  let best = null;
+  for (let i = 0; i + W <= nb; i++) {
+    const win = ele.slice(i, i + W);
+    const relief = Math.max(...win) - Math.min(...win);
+    const rolling = Math.min(1, sum(pR, i, i + W) / (W * binKm) / 1.5) * 0.6;
+    const parts = {
+      bends: sum(pB, i, i + W),
+      terrain: 1 + Math.max(Math.min(relief, 1200) / 1200, rolling),
+      scenery: 1 + 0.5 * (sum(pS, i, i + W) / W),
+      hairpins: 1 + (w.hairpinBonus * Math.min(sum(pH, i, i + W), 20)) / 40,
+    };
+    const fun = parts.bends * parts.terrain * parts.scenery * parts.hairpins;
+    if (!best || fun > best.fun) best = { fun, i, parts, rolling: rolling > relief / 1200 };
+  }
+
+  // how intense each part of the road is (bends + scenery per km, smoothed over 1 km)
+  const raw = bins.map((b, i) => (bend[i] * (1 + 0.5 * scen[i])) / binKm);
+  const dens = raw.map((_, i) => { const s = raw.slice(Math.max(0, i - 2), i + 3); return s.reduce((a, b) => a + b, 0) / s.length; });
+  // how much of the road is good riding: km anywhere at least half as intense as the best stretch.
+  // Meh stretches don't count; up to 30 km counts, with diminishing returns (6 km x0.63, 15 km x1, 30 km x1.41)
+  const winMean = dens.slice(best.i, best.i + W).reduce((a, b) => a + b, 0) / W;
+  const goodKm = dens.filter((d) => d >= 0.5 * winMean).length * binKm;
+  const lengthF = Math.sqrt(Math.min(goodKm, GOOD_KM_CAP) / WINDOW_KM);
+  const intensity = best.fun / (W * binKm);
+  const score = Math.round((100 * intensity * WINDOW_KM * lengthF) / SCORE_REF);
+
+  // hot spots: stretches within 70% of the road's most intense kilometre, at least 400 m long
+  const peakDens = Math.max(...dens), hot = [];
+  let start = -1;
+  dens.forEach((d, i) => {
+    const on = d >= 0.7 * peakDens;
+    if (on && start < 0) start = i;
+    if ((!on || i === nb - 1) && start >= 0) {
+      const end = on ? i + 1 : i;
+      if (end - start >= 2) {
+        if (hot.length && start - hot[hot.length - 1][1] / BIN <= 1) hot[hot.length - 1][1] = end * BIN;
+        else hot.push([start * BIN, end * BIN]);
+      }
+      start = -1;
+    }
+  });
+  const peak = (dens.indexOf(peakDens) + 0.5) * BIN;
+
+  const count = (f) => bins.filter(f).length * binKm;
+  return {
+    score, intensity, lengthF, goodKm, parts: best.parts, rolling: best.rolling,
+    stretch: [best.i * BIN, (best.i + W) * BIN], hot, peak, length: nb * BIN,
+    scenery: {
+      score: Math.round((100 * scen.reduce((a, b) => a + b, 0)) / nb),
+      viewKm: count((b) => b.v >= 0.5), dropKm: count((b) => b.p >= 0.5),
+      viewpoints: bins.reduce((a, b) => a + b.x, 0), builtPct: Math.round((100 * bins.reduce((a, b) => a + b.u, 0)) / nb),
+    },
+  };
 }
 
 // ------------------------------------------------------------------ download
@@ -78,6 +182,7 @@ export async function fetchOverpass(bbox, { onProgress = () => {}, attempts = 9,
 (
   way["highway"~"^(trunk|primary|secondary|tertiary|unclassified)$"](${s},${w},${n},${e});
   node["mountain_pass"="yes"](${s},${w},${n},${e});
+  node["tourism"="viewpoint"](${s},${w},${n},${e});
   node["place"~"^(city|town|village)$"](${s},${w},${n},${e});
 );
 out body geom qt;`;
@@ -302,8 +407,8 @@ export function bendsAlong(points) {
   return { step: STEP, cls: bendClasses(interp(sr, vd, x), interp(sr, vd, y)) };
 }
 
-/** A hairpin: >= 150 deg of same-direction turning within 120 m. */
-function countHairpins(x, y) {
+/** Where hairpins are (sample index): >= 150 deg of same-direction turning within 120 m. */
+function hairpinsAt(x, y) {
   const h = [];
   for (let i = 0; i < x.length - 1; i++) h.push(Math.atan2(y[i + 1] - y[i], x[i + 1] - x[i]));
   const cs = [0];
@@ -312,14 +417,71 @@ function countHairpins(x, y) {
     cs.push(cs[i] + ((((d + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI);
   }
   const win = 120 / STEP, lim = rad(150);
-  let count = 0, i = 0;
+  const at = [];
+  let i = 0;
   while (i < cs.length - 1) {
     let hit = -1;
     for (let k = i + 1; k <= Math.min(i + win, cs.length - 1); k++) if (Math.abs(cs[k] - cs[i]) >= lim) { hit = k; break; }
-    if (hit >= 0) { count++; i = hit; } else i++;
+    if (hit >= 0) { at.push((i + hit) >> 1); i = hit; } else i++;
   }
-  return count;
+  return at;
 }
+
+/** Sample indices of crests and dips: the profile turns after rising or falling at least `swing` metres. */
+function crestsAndDips(e, swing = 5) {
+  const at = [];
+  let ext = 0, dir = 0;
+  for (let i = 1; i < e.length; i++) {
+    if (dir === 0) {
+      if (Math.abs(e[i] - e[0]) >= swing) { dir = e[i] > e[0] ? 1 : -1; ext = i; }
+    } else if (dir === 1) {
+      if (e[i] > e[ext]) ext = i;
+      else if (e[ext] - e[i] >= swing) { at.push(ext); ext = i; dir = -1; }
+    } else {
+      if (e[i] < e[ext]) ext = i;
+      else if (e[i] - e[ext] >= swing) { at.push(ext); ext = i; dir = 1; }
+    }
+  }
+  return at;
+}
+
+/**
+ * Built-up by the road's own tags: only explicit urban markers ("FR:urban", "DE:zone30"...). A plain 40 or
+ * 50 limit isn't enough: Alpine passes are often signed that low through their hairpins.
+ */
+function urbanTags(t) {
+  const v = [t["maxspeed:type"], t["zone:maxspeed"], t["source:maxspeed"], t.maxspeed].filter(Boolean).join(" ");
+  return /urban|zone/i.test(v);
+}
+
+/** Points bucketed into ~2 km cells for "anything within X m?" lookups. */
+function pointGrid(points) {
+  const g = new Map();
+  for (const p of points) {
+    const k = `${Math.floor(p.lat / 0.02)},${Math.floor(p.lon / 0.02)}`;
+    if (!g.has(k)) g.set(k, []);
+    g.get(k).push(p);
+  }
+  return (lon, lat, fn) => {
+    const i = Math.floor(lat / 0.02), j = Math.floor(lon / 0.02), cc = Math.cos(rad(lat));
+    for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) {
+      for (const p of g.get(`${a},${b}`) || []) fn(p, Math.hypot((p.lon - lon) * cc, p.lat - lat) * rad(1) * R_EARTH);
+    }
+  };
+}
+
+const PLACE_RADIUS = { city: 1800, town: 800, village: 350 };
+const RING = [800, 1600];                         // m: "surroundings" for the view measure
+const SIDE = [60, 120];                           // m: either side of the road, for drop-offs
+const offset = (lon, lat, dx, dy) => [lon + (dx / (R_EARTH * Math.cos(rad(lat)))) * (180 / Math.PI), lat + (dy / R_EARTH) * (180 / Math.PI)];
+const ringPoints = (lon, lat) => {
+  const lo = [], la = [];
+  for (const r of RING) for (let k = 0; k < 8; k++) {
+    const [x, y] = offset(lon, lat, r * Math.cos((k * Math.PI) / 4), r * Math.sin((k * Math.PI) / 4));
+    lo.push(x); la.push(y);
+  }
+  return [lo, la];
+};
 
 /** Index ranges of curvy stretches, split wherever there's a long straight. */
 function sections(cls) {
@@ -402,13 +564,15 @@ function roadId(coords) {
  */
 export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, onProgress = () => {} } = {}) {
   onProgress("Finding the twisty bits…");
-  const ways = new Map(), passNodes = [], places = [];
+  const ways = new Map(), passNodes = [], places = [], viewpoints = [];
   for (const el of elements) {
     const t = el.tags || {};
     if (el.type === "way") { if (el.nodes?.length >= 2 && el.geometry && rideable(t)) ways.set(el.id, el); }
     else if ("mountain_pass" in t) passNodes.push(el);
     else if ("place" in t && t.name) places.push(el);
+    else if (t.tourism === "viewpoint") viewpoints.push(el);
   }
+  const nearPlace = pointGrid(places), nearViewpoint = pointGrid(viewpoints);
   const roadNodes = new Set();
   for (const w of ways.values()) for (const nd of w.nodes) roadNodes.add(nd);
   const passList = passNodes.filter((p) => p.tags?.name && roadNodes.has(p.id));   // road passes, not hiking cols
@@ -460,6 +624,12 @@ export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, on
       c.rsLat.push((c.ry[i] / R_EARTH) * (180 / Math.PI));
     }
     terrain.need(c.rsLon, c.rsLat, need);
+    // slice centres, and the surroundings we'll sample for the view measure
+    c.centres = [];
+    for (let i = PER_BIN >> 1; i < c.rsLon.length; i += PER_BIN) {
+      c.centres.push(i);
+      terrain.need(...ringPoints(c.rsLon[i], c.rsLat[i]), need);
+    }
   }
   terrain.need(passList.map((p) => p.lon), passList.map((p) => p.lat), need);
   await terrain.load(need, onProgress);
@@ -492,7 +662,44 @@ export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, on
     let [up, down, maxGrad] = climbStats(ele);
     const eleV = interp(outD, rsD, ele);
 
-    const hairpins = countHairpins(c.rx.slice(c.a, c.b + 1), c.ry.slice(c.a, c.b + 1));
+    const sx = c.rx.slice(c.a, c.b + 1), sy = c.ry.slice(c.a, c.b + 1);
+    const pins = hairpinsAt(sx, sy);
+    const hairpins = pins.length;
+
+    // 200 m slices: bend mix, hairpins, crests/dips, built-up, views, drop-offs, viewpoints
+    const nBins = Math.max(1, Math.ceil((ele.length - 1) / PER_BIN));
+    const bins = Array.from({ length: nBins }, () => ({ c: [0, 0, 0, 0], h: 0, r: 0, v: 0, p: 0, u: 0, x: 0 }));
+    const binOf = (i) => Math.min(nBins - 1, Math.floor(i / PER_BIN));
+    for (let i = 0; i < ele.length - 1; i++) {
+      const b = bins[binOf(i)], cl = c.cls[c.a + i];
+      if (cl) b.c[cl - 1]++;
+      if (urbanTags(tagsAt(rsD[i]))) b.u++;
+    }
+    for (const i of pins) bins[binOf(i)].h++;
+    for (const i of crestsAndDips(ele)) bins[binOf(i)].r++;
+    c.centres.forEach((i, bi) => {
+      if (bi >= nBins) return;
+      const b = bins[bi], lo = c.rsLon[i], la = c.rsLat[i];
+      let inPlace = false;
+      nearPlace(lo, la, (p, d) => { if (d < (PLACE_RADIUS[p.tags.place] || 0)) inPlace = true; });
+      if (inPlace) b.u = PER_BIN;
+      nearViewpoint(lo, la, (p, d) => { if (d < 200) b.x = 1; });
+      // view: how much of the horizon falls away below the road (half of it open = a full view). A balcony
+      // above a lake scores even with vineyards rising behind it; a valley floor doesn't.
+      const around = terrain.sample(...ringPoints(lo, la));
+      const open = around.filter((h) => h <= ele[i] - 60).length / around.length;
+      b.v = Math.min(9, (open / 0.5) * 9);
+      // drop-off: the steepest fall-away within 120 m either side
+      const j = Math.min(i + 1, sx.length - 1), k0 = Math.max(0, i - 1);
+      const hx = sx[j] - sx[k0], hy = sy[j] - sy[k0], hl = Math.hypot(hx, hy) || 1;
+      const sl = [], st = [];
+      for (const side of [-1, 1]) for (const m of SIDE) {
+        const [x, y] = offset(lo, la, (side * -hy * m) / hl, (side * hx * m) / hl);
+        sl.push(x); st.push(y);
+      }
+      const drop = ele[i] - Math.min(...terrain.sample(sl, st));
+      b.p = Math.max(0, Math.min(9, ((drop - 25) / 70) * 9));
+    });
 
     // names and warnings, weighted by length
     const nameLen = new Map(), refLen = new Map();
@@ -537,7 +744,7 @@ export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, on
 
     let coords = outLon.map((lo, i) => [+lo.toFixed(5), +outLat[i].toFixed(5), Math.round(eleV[i])]);
     if (down > up) {                                   // present every road uphill-first
-      coords = coords.reverse(); towns = towns.reverse(); [up, down] = [down, up];
+      coords = coords.reverse(); towns = towns.reverse(); bins.reverse(); [up, down] = [down, up];
     }
     const road = {
       id: roadId(coords),
@@ -555,8 +762,9 @@ export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, on
         toll, closed,
       },
       coords,
+      bins: encodeBins(bins),
     };
-    road.score = scoreParts(road).score;
+    road.score = scoreRoad(road).score;
     roads.push(road);
   }
   roads.sort((p, q) => q.score - p.score);

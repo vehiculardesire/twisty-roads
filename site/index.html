@@ -47,6 +47,7 @@
             <span>Sort</span>
             <select id="sort">
               <option value="score">Fun score</option>
+              <option value="scenery">Scenery</option>
               <option value="inBends">Share in bends</option>
               <option value="hairpins">Hairpins</option>
               <option value="climb">Climb</option>
@@ -123,20 +124,26 @@
   <dialog id="about" class="about">
     <button class="about-close btn icon" aria-label="Close">✕</button>
     <h2>What makes a road fun?</h2>
-    <p>Every paved road in OpenStreetMap is measured every 10 metres. The fun score multiplies three things:</p>
+    <p>Every paved road in OpenStreetMap is measured every 10 metres. A road is scored on <b>its best stretch</b>
+      (up to 15 km), so a great pass isn't dragged down by the valley road leading to it. That stretch scores:</p>
     <ol>
-      <li><b>Bends.</b> At each point we measure how tight the road turns: <i>sweeping</i> (radius under 175 m),
-        <i>flowing</i> (100 m), <i>tight</i> (60 m) or <i>hairpin-tight</i> (30 m). Every kilometre in a bend counts,
-        weighted by your taste: slide towards <b>Sweepers</b> and fast, flowing roads rise; towards <b>Hairpins</b>
-        and switchback stacks win. Straights count for nothing, and a straight longer than 2.5 km ends a section,
-        so a great pass isn't diluted by the valley road to it.</li>
-      <li><b>Mountain.</b> Climbing a mountain beats wiggling along a valley: up to <b>×2</b> for 1,200 m
-        between the lowest and highest point.</li>
-      <li><b>Hairpins.</b> The signature of a real pass (150° or more of turning within 120 m): up to <b>×1.5</b>
-        for 20 hairpins (more if you like hairpins, none if you like sweepers).</li>
+      <li><b>Bends.</b> How tight the road turns at each point: <i>sweeping</i> (radius under 175 m), <i>flowing</i>
+        (100 m), <i>tight</i> (60 m) or <i>hairpin-tight</i> (30 m). Every kilometre in a bend counts, weighted by
+        your taste: towards <b>Sweepers</b> fast, flowing roads rise; towards <b>Hairpins</b> switchback stacks win.
+        Bends through villages count only 30%: nice to look at, not to ride hard.</li>
+      <li><b>× Terrain.</b> Up to ×2 for 1,200 m of climb, or up to ×1.6 for rolling crests and dips, so hilly
+        roads without a big climb aren't punished.</li>
+      <li><b>× Scenery.</b> Up to ×1.5 where the view opens up below the road (balcony roads above lakes
+        and valleys), runs along a steep drop-off, or passes a marked viewpoint.</li>
+      <li><b>× Hairpins.</b> The signature of a real pass (150° or more of turning within 120 m): up to ×1.5,
+        more or less with your taste.</li>
     </ol>
-    <p>The scale is fixed, so scores compare anywhere: Cormet de Roselend in the French Alps is 100, and a road can
-      score higher.</p>
+    <p><b>× Good km.</b> Finally, how much of the road is good riding: the kilometres at least half as good as
+      its best stretch, up to 30 km. Meh stretches neither help nor hurt. A 6 km gem counts ×0.63, 15 km ×1,
+      30 km of greatness ×1.41.</p>
+    <p>On the map, the <b>hot spots</b> glow orange and ★ marks the single best bit.</p>
+    <p>The scale is fixed, so scores compare anywhere: 100 is about the best road in the French and Swiss Alps
+      around Geneva (Col de L'Arpettaz), and a road can score higher.</p>
     <p><b>Not in the score</b>, but shown as warnings: narrow or single-lane stretches, tolls, tunnels, and seasonal
       closures. Unpaved, private and farm-only roads are left out entirely.</p>
     <p class="muted">Road data changes: check closures and conditions before you ride.</p>

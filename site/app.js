@@ -1,5 +1,5 @@
 /* Twisty Roads: MapLibre + 3D terrain + elevation profile. No build step. */
-import { ALGO_VERSION, BENDS, bendsAlong, scoreParts } from "./core/twisty.js";
+import { ALGO_VERSION, BENDS, bendsAlong, scoreRoad } from "./core/twisty.js";
 
 const $ = (s) => document.querySelector(s);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -70,7 +70,11 @@ function removeArea(key) {
 }
 
 function rescore() {
-  for (const r of roads) r.score = scoreParts(r, state.taste).score;
+  for (const r of roads) {
+    r.fx = scoreRoad(r, state.taste);      // score + best stretch + hot spots, for this taste
+    r.score = r.fx.score;
+    r.scenery = r.fx.scenery.score;
+  }
   byId = new Map(roads.map((r) => [r.id, r]));
 }
 
@@ -228,6 +232,9 @@ function showRider(p) {
   if (!riderOn) { rider.addTo(map); riderOn = true; }
 }
 function hideRider() { if (riderOn) { rider.remove(); riderOn = false; } }
+const peakMarker = new maplibregl.Marker({
+  element: Object.assign(document.createElement("div"), { className: "peak", textContent: "★", title: "The best bit" }),
+});
 
 const emptyFC = { type: "FeatureCollection", features: [] };
 
@@ -275,6 +282,12 @@ mapReady.then(() => {
   // selected road: one continuous white casing under runs coloured by bend tightness
   map.addSource("sel", { type: "geojson", data: emptyFC });
   map.addSource("sel-runs", { type: "geojson", data: emptyFC });
+  map.addSource("hot", { type: "geojson", data: emptyFC });
+  map.addLayer({
+    id: "hot-glow", type: "line", source: "hot",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": css("--accent"), "line-width": width(11), "line-opacity": 0.45, "line-blur": 3 },
+  });
   map.addLayer({
     id: "sel-casing", type: "line", source: "sel",
     layout: { "line-cap": "round", "line-join": "round" },
@@ -405,7 +418,7 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
       roads: msg.roads, passes: msg.passes,
     };
     addArea(area);
-    areasDB("put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, ...r }) => r) }).catch(() => {});
+    areasDB("put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, ...r }) => r) }).catch(() => {});
     refreshMapData();
     renderAreas();
 
@@ -554,7 +567,7 @@ tasteEl.addEventListener("input", () => {
     rescore();
     map.getSource("roads")?.setData(roadsGeoJSON());
     renderList();
-    if (state.sel) renderDetail();
+    if (state.sel) { renderDetail(); renderHot(); drawProfile(); }
   }, 120);
 });
 const tasteLabel = () => (state.taste < 0.35 ? "Fast sweepers" : state.taste > 0.65 ? "Tight hairpins" : "A bit of everything");
@@ -591,6 +604,7 @@ function select(road, reversed = false) {
 
   map.getSource("sel").setData({ type: "Feature", geometry: { type: "LineString", coordinates: v.coords.map((p) => [p[0], p[1]]) } });
   map.getSource("sel-runs").setData(bendRuns(v));
+  renderHot();
   map.setPaintProperty("roads", "line-opacity", 0.45);
   map.setPaintProperty("roads-casing", "line-opacity", 0.4);
 
@@ -632,14 +646,49 @@ function closureText(c) {
   return "Seasonal closures";
 }
 
+/** Engine distances (along the stored road, uphill-first) -> distances along the view's smoothed line. */
+function toView(v, d) {
+  const x = (d * v.total) / (v.road.fx.length || v.total);
+  return clamp(v.reversed ? v.total - x : x, 0, v.total);
+}
+const span = (v, [a, b]) => [toView(v, a), toView(v, b)].sort((p, q) => p - q);
+
+/** Hot spots as a glow under the selected road, and a star on its single best point. */
+function renderHot() {
+  const v = state.view;
+  const lines = v.road.fx.hot.map((h) => {
+    const [a, b] = span(v, h);
+    const pts = [v.at(a)];
+    for (let i = 0; i < v.dist.length; i++) if (v.dist[i] > a && v.dist[i] < b) pts.push(v.coords[i]);
+    pts.push(v.at(b));
+    return { type: "Feature", geometry: { type: "LineString", coordinates: pts.map((p) => [p[0], p[1]]) } };
+  });
+  map.getSource("hot").setData({ type: "FeatureCollection", features: lines });
+  const p = v.at(toView(v, v.road.fx.peak));
+  peakMarker.setLngLat([p[0], p[1]]).addTo(map);
+}
+
 function renderDetail() {
-  const road = state.sel, v = state.view;
-  const parts = scoreParts(road, state.taste);
+  const road = state.sel, v = state.view, fx = road.fx, parts = fx.parts;
   $("#dName").textContent = road.name;
   $("#dSub").textContent = [road.road, route(v.from, v.to)].filter(Boolean).join(" · ");
 
-  // why it's fun: bend mix bar + the three factors of the score
+  // why it's fun: bend mix, the four factors of the best stretch, then length and sustain
   const totalBends = road.bends.reduce((a, b) => a + b, 0);
+  const [s0, s1] = span(v, fx.stretch);
+  const whole = s1 - s0 >= v.total - 300;
+  const notes = [
+    whole ? "Scored on the whole road" : `Scored on its best ${km(s1 - s0)} km (km ${km(s0)}–${km(s1)})`,
+    `${fx.goodKm.toFixed(fx.goodKm < 10 ? 1 : 0)} km of good riding ×${fx.lengthF.toFixed(2)}`,
+  ].join(" · ");
+  const hot = fx.hot.map((h) => span(v, h)).sort((a, b) => a[0] - b[0]);
+  const sc = fx.scenery;
+  const scen = [
+    sc.viewKm >= 0.4 && `open views for ${sc.viewKm.toFixed(1)} km`,
+    sc.dropKm >= 0.4 && `drop-offs for ${sc.dropKm.toFixed(1)} km`,
+    sc.viewpoints && `${sc.viewpoints} viewpoint${sc.viewpoints > 1 ? "s" : ""}`,
+    sc.builtPct >= 10 && `${sc.builtPct}% through villages (bends there count less)`,
+  ].filter(Boolean);
   $("#dFun").innerHTML = `
     <div class="fun-score"><b>${road.score}</b><span>fun</span></div>
     <div class="fun-why">
@@ -648,12 +697,17 @@ function renderDetail() {
       </div>
       <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)}</span>`).join("")}</div>
       <div class="factors">
-        <span title="Weighted km of bends, for your taste">${parts.bends.toFixed(1)} <small>bends</small></span>
+        <span title="Weighted km of bends in the best stretch, for your taste">${parts.bends.toFixed(1)} <small>bends</small></span>
         <span class="x">×</span>
-        <span title="${fmt(road.eleMax - road.eleMin)} m from lowest to highest point">${parts.mountain.toFixed(2)} <small>mountain</small></span>
+        <span title="${fx.rolling ? "Rolling: crests and dips" : "Climb within the stretch"}">${parts.terrain.toFixed(2)} <small>${fx.rolling ? "rolling" : "terrain"}</small></span>
         <span class="x">×</span>
-        <span title="${road.hairpins} hairpins">${parts.hairpins.toFixed(2)} <small>hairpins</small></span>
+        <span title="Views, drop-offs and viewpoints">${parts.scenery.toFixed(2)} <small>scenery</small></span>
+        <span class="x">×</span>
+        <span title="Hairpins in the stretch">${parts.hairpins.toFixed(2)} <small>hairpins</small></span>
       </div>
+      <div class="fun-note">${notes}</div>
+      ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)}–${km(b)}`).join(", ")}</div>` : ""}
+      ${scen.length ? `<div class="fun-note">Scenery: ${scen.join(" · ")}</div>` : ""}
     </div>`;
 
   $("#dStats").innerHTML = [
@@ -681,6 +735,8 @@ function deselect() {
   state.sel = state.view = null;
   map.getSource("sel").setData(emptyFC);
   map.getSource("sel-runs").setData(emptyFC);
+  map.getSource("hot").setData(emptyFC);
+  peakMarker.remove();
   map.setPaintProperty("roads", "line-opacity", 1);
   map.setPaintProperty("roads-casing", "line-opacity", 0.9);
   $("#detail").hidden = true;
@@ -775,7 +831,8 @@ function renderLegend() {
   const el = $("#legend");
   if (state.sel) {
     el.innerHTML = `Bend tightness<div class="keys">${BEND_NAMES.map((n, i) =>
-      `<span title="${BEND_RADII[i]}"><i style="--c:var(--c${i})"></i>${n}</span>`).join("")}</div>`;
+      `<span title="${BEND_RADII[i]}"><i style="--c:var(--c${i})"></i>${n}</span>`).join("")}</div>
+      <div class="keys"><span><i class="glow"></i>Hot spot</span><span><b class="star">★</b> Best bit</span></div>`;
   } else {
     el.innerHTML = `Fun score
       <div class="ramp" style="background:linear-gradient(90deg,var(--s1),var(--s2),var(--s3),var(--s4))"></div>
@@ -850,6 +907,13 @@ function drawProfile() {
   g.textBaseline = "top";
   for (let k = 0; k <= kmTotal + 1e-6; k += xs) g.fillText(`${+k.toFixed(1)} km`, X(k * 1000), H - M.b + 5);
 
+  // hot spots: a soft band behind the profile
+  g.fillStyle = css("--hot");
+  for (const h of v.road.fx.hot) {
+    const [a, b] = span(v, h);
+    g.fillRect(X(a), M.t, X(b) - X(a), H - M.t - M.b);
+  }
+
   // area in bands of ~1/60 of the road (200 m - 1 km), each coloured by its own average gradient
   const n = Math.max(2, Math.round(v.total / clamp(v.total / 60, 200, 1000)));
   for (let i = 0; i < n; i++) {
@@ -879,6 +943,16 @@ function drawProfile() {
     g.textBaseline = "bottom";
     g.font = "600 11px system-ui, sans-serif";
     g.fillText(`${ps.name} ${fmt(ps.ele)} m`, px, py - 6);
+  }
+
+  // the single best point
+  {
+    const pd = toView(v, v.road.fx.peak), p = v.at(pd);
+    g.fillStyle = css("--accent");
+    g.font = "15px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "bottom";
+    g.fillText("★", X(pd), Y(p[2]) - 3);
   }
 
   if (cursorD != null) {

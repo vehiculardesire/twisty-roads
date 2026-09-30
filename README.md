@@ -64,6 +64,14 @@ The scale is fixed (`SCORE_REF`), so scores compare across regions, and it's nor
 typical great pass) so the slider reshuffles roads without inflating them. It's linear, with **100 set by the
 world's benchmark roads** (Stelvio, Grossglockner, Tail of the Dragon); anything better also shows 100.
 
+**Calibration:** benchmark roads scanned with the app score Stelvio 95, Grossglockner 81, Transfăgărășan 81 and
+Tail of the Dragon 71. Around Geneva, Col de L'Arpettaz hits the ceiling (57 hairpins in 26 km, denser than the
+Stelvio) and the Colle del Nivolet scores 80.
+
+**Limits, stated openly on the site:** the score measures twistiness, climbing and views. It can't see road width
+(rarely mapped), surface quality, traffic, waterfalls or glaciers, fame or atmosphere, or whether a road is open
+today. A tight mountain lane and a wide famous pass can score the same.
+
 How the raw data becomes roads:
 
 - **Roads:** `trunk / primary / secondary / tertiary / unclassified`, minus unpaved, private, farm-only and

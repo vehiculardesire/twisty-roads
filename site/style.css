@@ -223,6 +223,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 .about::backdrop { background: rgba(0, 0, 0, 0.45); }
 .about h2 { margin: 0 0 8px; font-size: 20px; }
+.about h3 { margin: 16px 0 4px; font-size: 15px; }
 .about ol { padding-left: 20px; }
 .about li { margin-bottom: 8px; }
 .about .muted { color: var(--muted); font-size: 12px; }

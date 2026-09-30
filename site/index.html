@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Twisty Roads Geneva</title>
+  <meta name="description" content="The twistiest roads and mountain passes around Geneva, ranked by curves, hairpins and climb, on a 3D terrain map.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26c6 0 6-8 12-8s4-12 12-12' fill='none' stroke='%23d94801' stroke-width='4' stroke-linecap='round'/></svg>">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <header class="brand">
+        <h1>Twisty roads</h1>
+        <p>Every paved road scored by how often it bends and how much it climbs. Geneva, Jura, Savoie, Valais and Aosta are built in. Scan anywhere else below.</p>
+      </header>
+
+      <div class="controls">
+        <input id="search" type="search" placeholder="Search a road, pass or town" autocomplete="off">
+        <div class="row">
+          <label class="select">
+            <span>Sort</span>
+            <select id="sort">
+              <option value="score">Fun score</option>
+              <option value="density">Curves per km</option>
+              <option value="hairpins">Hairpins</option>
+              <option value="climb">Climb</option>
+              <option value="eleMax">Highest point</option>
+              <option value="len">Length</option>
+            </select>
+          </label>
+          <label class="chip"><input id="passesOnly" type="checkbox"> Passes only</label>
+        </div>
+      </div>
+
+      <form id="scanForm" class="explore">
+        <label for="place">Explore somewhere else</label>
+        <div class="row">
+          <input id="place" type="search" placeholder="Town or area, e.g. Chamonix" autocomplete="off">
+          <select id="radius" aria-label="Search radius">
+            <option value="20">20 km</option>
+            <option value="30" selected>30 km</option>
+            <option value="45">45 km</option>
+          </select>
+        </div>
+        <div class="row">
+          <button id="scanGo" class="btn primary" type="submit">Find twisties</button>
+          <button id="scanView" class="btn" type="button">Scan map view</button>
+        </div>
+        <p id="scanStatus" class="scan-status" hidden></p>
+      </form>
+
+      <p id="count" class="count"></p>
+      <ol id="list" class="list"></ol>
+
+      <footer class="credits">
+        Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ·
+        Terrain: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> ·
+        Map: <a href="https://openfreemap.org">OpenFreeMap</a>
+      </footer>
+    </aside>
+
+    <main class="stage">
+      <div id="map"></div>
+
+      <div class="map-tools">
+        <button id="toggle3d" class="tool on" aria-pressed="true" title="Toggle 3D terrain">3D</button>
+        <label class="tool exag" title="Terrain exaggeration">
+          <span>Relief</span>
+          <input id="exag" type="range" min="1" max="2.5" step="0.1" value="1.4">
+        </label>
+      </div>
+
+      <div id="legend" class="legend"></div>
+      <div id="tip" class="tip" hidden></div>
+
+      <section id="detail" class="detail" hidden>
+        <div class="detail-head">
+          <div>
+            <h2 id="dName"></h2>
+            <p id="dSub" class="sub"></p>
+          </div>
+          <div class="actions">
+            <button id="fly" class="btn primary">▶ Fly along</button>
+            <button id="reverse" class="btn" title="Ride it the other way">⇄</button>
+            <a id="nav" class="btn" target="_blank" rel="noopener">Navigate</a>
+            <button id="gpx" class="btn">GPX</button>
+            <button id="close" class="btn icon" aria-label="Close">✕</button>
+          </div>
+        </div>
+        <dl id="dStats" class="stats"></dl>
+        <div class="profile-wrap">
+          <canvas id="profile"></canvas>
+          <div id="pTip" class="ptip" hidden></div>
+        </div>
+        <div class="profile-legend">
+          <span>Gradient</span>
+          <i style="--c:var(--g1)"></i>&lt;4%
+          <i style="--c:var(--g2)"></i>4–7%
+          <i style="--c:var(--g3)"></i>7–10%
+          <i style="--c:var(--g4)"></i>≥10%
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -133,21 +133,38 @@ function smoothPath(coords, spacing = 2) {
 }
 
 /**
- * Bend classes every 10 m flicker (a 10 m wobble in a sweeper reads as "tight"). A rider feels a bend over
- * tens of metres, so: majority vote over 70 m, then fold any run shorter than 40 m into the one before it.
+ * Calm the 10 m bend classes for drawing without ever losing a corner: smoothing may change how tight a bend
+ * is drawn, never whether it is a bend.
+ *  1. Bend or straight comes from the raw data. Only 10 m specks of the gentlest class (wobble in the smoothed
+ *     line) are dropped, and straight gaps under 30 m inside a bend are bridged.
+ *  2. Inside bends, tightness is a majority vote of the bend samples within 70 m (ties go to the tighter),
+ *     so a sweeper doesn't flicker between classes.
  */
 function steadyBends(raw) {
-  const n = raw.length, out = new Uint8Array(n);
+  const n = raw.length;
+  const bend = Array.from(raw, (c) => c > 0);
+  const runsOf = (arr) => {
+    const out = [];
+    for (let i = 0; i < n;) {
+      let j = i;
+      while (j < n && arr[j] === arr[i]) j++;
+      out.push([i, j, arr[i]]);
+      i = j;
+    }
+    return out;
+  };
+  for (const [a, b, on] of runsOf(bend)) if (on && b - a === 1 && raw[a] === 1) bend[a] = false;
+  const runs = runsOf(bend);
+  runs.forEach(([a, b, on], k) => { if (!on && b - a < 3 && k > 0 && k < runs.length - 1) bend.fill(true, a, b); });
+
+  const out = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
+    if (!bend[i]) continue;
     const counts = [0, 0, 0, 0, 0];
-    for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) counts[raw[j]]++;
-    out[i] = counts.reduce((best, c, k) => (c >= counts[best] ? k : best), 0);   // ties go to the tighter bend
-  }
-  for (let i = 0, prev = out[0]; i < n;) {
-    let j = i;
-    while (j < n && out[j] === out[i]) j++;
-    if (j - i < 4 && i > 0) out.fill(prev, i, j); else prev = out[i];
-    i = j;
+    for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) if (bend[j] && raw[j]) counts[raw[j]]++;
+    let best = 0;
+    for (let k = 1; k <= 4; k++) if (counts[k] && counts[k] >= counts[best]) best = k;
+    out[i] = best || 1;
   }
   return out;
 }

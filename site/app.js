@@ -36,7 +36,7 @@ delete baseStyle.sources.ne2_shaded;
 baseStyle.layers = baseStyle.layers.filter((l) => l.source !== "ne2_shaded");
 
 const state = {
-  sort: "score", query: "", passesOnly: false, inView: true, show: "all",
+  sort: "score", query: "", inView: true, show: "all", whyOpen: false, stopsOpen: false,
   taste: me.tuned?.taste ?? store.get("taste", 0.5),
   sel: null, view: null, hover: null, is3d: true, exag: 1.4,
 };
@@ -511,7 +511,7 @@ function showScanBox(bbox) {
 
 function setScanUI(busy, msg, isError = false) {
   for (const b of ["#scanGo", "#scanView", "#nearMe"]) $(b).disabled = busy;
-  $("#scanGo").textContent = busy ? "Scanning…" : "Find twisties";
+  $("#scanGo").textContent = busy ? "Scanning…" : "Find";
   const st = $("#scanStatus");
   st.hidden = !msg;
   st.textContent = msg || "";
@@ -577,11 +577,11 @@ renderAreas();
 function matchingRoads() {
   const q = state.query.trim().toLowerCase();
   const show = {
-    all: () => true, fav: (r) => isFav(r.id), unridden: (r) => !ridden.has(r.id),
+    all: () => true, passes: (r) => !!r.pass, fav: (r) => isFav(r.id), unridden: (r) => !ridden.has(r.id),
     ridden: (r) => ridden.has(r.id), rated: (r) => ratingOf(r.id) !== 0,
   }[state.show];
   return roads.filter((r) =>
-    (!state.passesOnly || r.pass) && show(r) &&
+    show(r) &&
     (!q || [r.name, r.road, r.from, r.to, r.pass?.name].some((s) => s && s.toLowerCase().includes(q))));
 }
 
@@ -633,7 +633,6 @@ function route(a, b) {
 
 $("#search").addEventListener("input", (e) => { state.query = e.target.value; applyFilter(); });
 $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; renderList(); });
-$("#passesOnly").addEventListener("change", (e) => { state.passesOnly = e.target.checked; applyFilter(); });
 $("#show").addEventListener("change", (e) => { state.show = e.target.value; applyFilter(); });
 $("#inView").addEventListener("change", (e) => { state.inView = e.target.checked; renderList(); });
 
@@ -817,7 +816,6 @@ function renderDetail() {
       <div class="mix" title="How the ${totalBends.toFixed(1)} km of bends split by tightness">
         ${road.bends.map((k, i) => `<i style="flex:${k};--c:var(--c${i + 1})" title="${BEND_NAMES[i + 1]}: ${k.toFixed(1)} km"></i>`).join("")}
       </div>
-      <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)}</span>`).join("")}</div>
       <div class="factors">
         <span title="Weighted km of bends in the best stretch, for your taste">${parts.bends.toFixed(1)} <small>bends</small></span>
         <span class="x">× (1</span>
@@ -826,10 +824,15 @@ function renderDetail() {
         <span title="Hairpins in the stretch">+${(parts.hairpins - 1).toFixed(2)} <small>hairpins</small></span>
         <span class="x">)</span>
       </div>
-      <div class="fun-note">${notes}</div>
-      ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)}–${km(b)}`).join(", ")}</div>` : ""}
-      ${scen.length ? `<div class="fun-note">Scenery: ${scen.join(" · ")}</div>` : ""}
+      <details class="more" id="why"${state.whyOpen ? " open" : ""}>
+        <summary>Why this score</summary>
+        <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)} km</span>`).join("")}</div>
+        <div class="fun-note">${notes}</div>
+        ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)}–${km(b)}`).join(", ")}</div>` : ""}
+        ${scen.length ? `<div class="fun-note">Scenery: ${scen.join(" · ")}</div>` : ""}
+      </details>
     </div>`;
+  $("#why").addEventListener("toggle", (e) => { state.whyOpen = e.target.open; });
 
   $("#dStats").innerHTML = [
     ["Length", `${km(road.len)} km`],
@@ -970,8 +973,12 @@ async function loadStops(road) {
   if (!stops.length) { el.innerHTML = `<span class="muted">No cafés, food or fuel mapped within 200 m of this road.</span>`; return; }
   const v = state.view;
   const withKm = stops.map((st) => ({ ...st, d: v.nearest(st.lon, st.lat) })).sort((a, b) => a.d - b.d);
-  el.innerHTML = `<span class="stops-label">Stops</span>` + withKm.slice(0, 12).map((st, i) =>
-    `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}">${st.icon} ${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("");
+  el.innerHTML = `<details class="more" id="stopsMore"${state.stopsOpen ? " open" : ""}>
+    <summary>Stops along the road <small>${withKm.length} place${withKm.length === 1 ? "" : "s"}: cafés, food, fuel</small></summary>
+    <div class="stop-list">${withKm.slice(0, 12).map((st, i) =>
+    `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}">${st.icon} ${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("")}</div>
+  </details>`;
+  $("#stopsMore").addEventListener("toggle", (e) => { state.stopsOpen = e.target.open; });
   el._stops = withKm;
   map.getSource("stops").setData({
     type: "FeatureCollection",

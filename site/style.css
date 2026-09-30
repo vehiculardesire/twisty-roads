@@ -73,6 +73,8 @@ button, input, select { font: inherit; color: inherit; }
   border: 1px solid var(--line); background: var(--bg);
 }
 .row { display: flex; gap: 8px; align-items: center; }
+.filters { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; align-items: center; }
+.filters select { min-width: 0; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
 .select { display: flex; align-items: center; gap: 6px; color: var(--ink-2); flex: 1; }
 .select select {
   flex: 1; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg);
@@ -89,7 +91,11 @@ button, input, select { font: inherit; color: inherit; }
 }
 .explore input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
 .explore select { padding: 7px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
-.explore .btn { flex: 1; justify-content: center; padding: 6px 8px; }
+.explore .btn { flex: 0 0 auto; justify-content: center; padding: 6px 14px; }
+.explore-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; }
+.tool-link { background: none; border: 0; padding: 2px 0; cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 500; }
+.tool-link:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.tool-link:disabled { opacity: 0.6; cursor: progress; }
 .explore .btn:disabled { opacity: 0.6; cursor: progress; }
 .scan-status { margin: 0; font-size: 12px; color: var(--ink-2); }
 .scan-status.busy::before {
@@ -109,8 +115,6 @@ button, input, select { font: inherit; color: inherit; }
 .count { margin: 8px 20px 4px; color: var(--muted); font-size: 12px; }
 
 /* your rides */
-.rides { margin: 8px 20px 0; display: grid; gap: 6px; }
-.rides .btn { padding: 5px 10px; font-size: 13px; }
 .rides-info { color: var(--muted); font-size: 12px; }
 
 /* taste learning */
@@ -199,7 +203,14 @@ button, input, select { font: inherit; color: inherit; }
 /* stops along the road */
 .stops { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 12px; }
 .stops .muted { color: var(--muted); }
-.stops-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }
+.stops > details { width: 100%; }
+.stop-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+/* fold-open sections in the road card */
+details.more summary { cursor: pointer; color: var(--ink-2); font-size: 12px; font-weight: 600; width: fit-content; }
+details.more summary:hover { color: var(--ink); }
+details.more summary small { color: var(--muted); font-weight: 400; margin-left: 4px; }
+details.more[open] > .mix-keys { margin-top: 6px; }
+details.more > .fun-note { margin-top: 4px; }
 .stop {
   border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 2px 9px; cursor: pointer;
   font-size: 12px; white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis;

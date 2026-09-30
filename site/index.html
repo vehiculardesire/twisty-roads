@@ -25,24 +25,19 @@
             <option value="30" selected>30 km</option>
             <option value="45">45 km</option>
           </select>
+          <button id="scanGo" class="btn primary" type="submit">Find</button>
         </div>
-        <div class="row">
-          <button id="scanGo" class="btn primary" type="submit">Find twisties</button>
-          <button id="nearMe" class="btn" type="button" title="Scan around your current location">Near me</button>
-          <button id="scanView" class="btn" type="button" title="Scan around the centre of the map">Map view</button>
-        </div>
-        <p id="scanStatus" class="scan-status" hidden></p>
-        <div id="areas" class="areas" hidden></div>
-      </form>
-
-      <div class="rides">
-        <div class="row">
-          <button id="ridesBtn" class="btn" type="button" title="Import rides recorded on your phone or bike computer">Import your rides (GPX)</button>
+        <div class="explore-tools">
+          <button id="nearMe" class="tool-link" type="button" title="Scan around your current location">Near me</button>
+          <button id="scanView" class="tool-link" type="button" title="Scan around the centre of the map">Map view</button>
+          <button id="ridesBtn" class="tool-link" type="button" title="Import rides recorded on your phone or bike computer, or drop GPX files anywhere">Import rides</button>
           <span id="ridesInfo" class="rides-info"></span>
         </div>
         <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml" multiple hidden>
+        <p id="scanStatus" class="scan-status" hidden></p>
+        <div id="areas" class="areas" hidden></div>
         <div id="rideChips" class="areas" hidden></div>
-      </div>
+      </form>
 
       <div class="controls">
         <label class="taste">
@@ -52,10 +47,8 @@
         </label>
         <div id="tune" class="tune"></div>
         <input id="search" type="search" placeholder="Filter by road, pass or town" autocomplete="off" aria-label="Filter roads">
-        <div class="row">
-          <label class="select">
-            <span>Sort</span>
-            <select id="sort">
+        <div class="filters">
+          <select id="sort" aria-label="Sort by">
               <option value="score">Fun score</option>
               <option value="scenery">Scenery</option>
               <option value="inBends">Share in bends</option>
@@ -63,21 +56,17 @@
               <option value="climb">Climb</option>
               <option value="eleMax">Highest point</option>
               <option value="len">Length</option>
-            </select>
-          </label>
-          <label class="chip"><input id="inView" type="checkbox" checked> In view</label>
-          <label class="chip"><input id="passesOnly" type="checkbox"> Passes</label>
-        </div>
-        <label class="select">
-          <span>Show</span>
-          <select id="show">
+          </select>
+          <select id="show" aria-label="Show">
             <option value="all">All roads</option>
+            <option value="passes">Passes only</option>
             <option value="fav">★ Favourites</option>
             <option value="unridden">Not ridden yet</option>
             <option value="ridden">✓ Ridden</option>
             <option value="rated">Rated by you</option>
           </select>
-        </label>
+          <label class="chip" title="Only list roads in the map view"><input id="inView" type="checkbox" checked> In view</label>
+        </div>
       </div>
 
       <p id="count" class="count"></p>

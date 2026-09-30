@@ -55,7 +55,9 @@ viewpoint), stored as a compact `bins` string so the site can re-score it for an
   (6 km ×0.63, 15 km ×1, 30 km ×1.41). Meh stretches neither help nor hurt.
 
 Hot spots are the stretches within 70% of the road's most intense kilometre, and ★ marks the peak.
-The scale is fixed (`SCORE_REF`): about 100 for the best road around Geneva, so scores compare across regions.
+The scale is fixed (`SCORE_REF`), so scores compare across regions, and it's normalised per taste (against a
+typical great pass) so the slider reshuffles roads without inflating them. Scores are linear up to 80 and
+compressed above, so 100 (a perfect road) is never reached; the best road around Geneva is about 93.
 
 How the raw data becomes roads:
 

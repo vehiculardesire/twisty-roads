@@ -53,7 +53,25 @@ const BUILT_UP_KEEP = 0.3;               // bends in villages count 30%: fun to 
 const W_SWEEPERS = [1.6, 1.4, 1.0, 0.6];
 const W_BALANCED = [1.0, 1.3, 1.6, 2.0];
 const W_HAIRPINS = [0.6, 1.0, 1.7, 2.4];
-export const SCORE_REF = 62.5;           // fixed scale: the best road around Geneva (Col de L'Arpettaz) is about 100
+export const SCORE_REF = 62.5;           // raw fun that maps to 100 before the soft cap (Col de L'Arpettaz, balanced taste)
+
+/**
+ * The taste slider should reshuffle roads, not inflate every score. Hairpin-lover weights are bigger, so divide
+ * by how a typical great pass (this bend mix over 15 km, 20 hairpins) scores at that taste versus balanced.
+ */
+const TYPICAL_PASS = { bends: [3.0, 3.0, 2.5, 1.5], hairpins: 20 };
+function tasteScale(taste) {
+  const raw = (t) => {
+    const w = tasteWeights(t);
+    return TYPICAL_PASS.bends.reduce((s, km, i) => s + km * w.bends[i], 0) * (1 + (w.hairpinBonus * TYPICAL_PASS.hairpins) / 40);
+  };
+  return raw(taste) / raw(0.5);
+}
+
+/** 0-100, where 100 would be a perfect road: linear up to 80, then compressed so nothing quite reaches 100. */
+export function funScale(x) {
+  return Math.round(Math.min(99, x <= 80 ? x : 80 + 20 * (1 - Math.exp(-(x - 80) / 20))));
+}
 
 /** Weights for a taste between 0 (fast sweepers) and 1 (tight hairpins); 0.5 is balanced. */
 export function tasteWeights(taste = 0.5) {
@@ -142,7 +160,7 @@ export function scoreRoad(road, taste = 0.5) {
   const goodKm = dens.filter((d) => d >= 0.5 * winMean).length * binKm;
   const lengthF = Math.sqrt(Math.min(goodKm, GOOD_KM_CAP) / WINDOW_KM);
   const intensity = best.fun / (W * binKm);
-  const score = Math.round((100 * intensity * WINDOW_KM * lengthF) / SCORE_REF);
+  const score = funScale((100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste)));
 
   // hot spots: stretches within 70% of the road's most intense kilometre, at least 400 m long
   const peakDens = Math.max(...dens), hot = [];

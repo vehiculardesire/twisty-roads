@@ -53,25 +53,29 @@ const BUILT_UP_KEEP = 0.3;               // bends in villages count 30%: fun to 
 const W_SWEEPERS = [1.6, 1.4, 1.0, 0.6];
 const W_BALANCED = [1.0, 1.3, 1.6, 2.0];
 const W_HAIRPINS = [0.6, 1.0, 1.7, 2.4];
-export const SCORE_REF = 62.5;           // raw fun that maps to 100 before the soft cap (Col de L'Arpettaz, balanced taste)
+export const SCORE_REF = 32.2;           // raw fun that scores 100; the Stelvio scores about 95
 
 /**
  * The taste slider should reshuffle roads, not inflate every score. Hairpin-lover weights are bigger, so divide
  * by how a typical great pass (this bend mix over 15 km, 20 hairpins) scores at that taste versus balanced.
  */
-const TYPICAL_PASS = { bends: [3.0, 3.0, 2.5, 1.5], hairpins: 20 };
+const TYPICAL_PASS = { bends: [3.0, 3.0, 2.5, 1.5], hairpins: 20, terrain: 0.35, scenery: 0.3 };
 function tasteScale(taste) {
   const raw = (t) => {
-    const w = tasteWeights(t);
-    return TYPICAL_PASS.bends.reduce((s, km, i) => s + km * w.bends[i], 0) * (1 + (w.hairpinBonus * TYPICAL_PASS.hairpins) / 40);
+    const w = tasteWeights(t), p = TYPICAL_PASS;
+    return p.bends.reduce((s, km, i) => s + km * w.bends[i], 0) * (hairpinFactor(p.hairpins, w.hairpinBonus) + p.terrain + p.scenery);
   };
   return raw(taste) / raw(0.5);
 }
 
-/** 0-100, where 100 would be a perfect road: linear up to 80, then compressed so nothing quite reaches 100. */
-export function funScale(x) {
-  return Math.round(Math.min(99, x <= 80 ? x : 80 + 20 * (1 - Math.exp(-(x - 80) / 20))));
+/** x1.5 at 20 hairpins (balanced), then diminishing returns up to 60 so Stelvio-style stacks still count. */
+function hairpinFactor(h, bonus) {
+  h = Math.min(h, 60);
+  return 1 + bonus * (h <= 20 ? h / 40 : 0.5 * Math.sqrt(h / 20));
 }
+
+/** Rough treeline: ~2,000 m in the Alps and Carpathians, falling north of 47° (~950 m in western Norway). */
+const treeline = (lat) => Math.max(500, 2000 - 70 * Math.max(0, Math.abs(lat) - 47));
 
 /** Weights for a taste between 0 (fast sweepers) and 1 (tight hairpins); 0.5 is balanced. */
 export function tasteWeights(taste = 0.5) {
@@ -111,26 +115,34 @@ function decode(road) {
   return d;
 }
 
-/** Scenery of one slice, 0..1: an open view down over the surroundings, a steep fall-away beside it, a viewpoint. */
-const sliceScenery = (b) => Math.min(1, 0.65 * b.v + 0.35 * b.p + (b.x ? 0.3 : 0));
+/**
+ * Scenery of one slice, 0..1: an open view down over the surroundings, a steep fall-away beside it, a viewpoint,
+ * and being up in high alpine terrain (fully counted from 200 m above the treeline).
+ */
+const sliceScenery = (b, alpine) => Math.min(1, 0.65 * b.v + 0.35 * b.p + (b.x ? 0.3 : 0) + 0.4 * alpine);
 
 /**
  * The fun score and everything the UI needs to explain it.
  *
- * For the best stretch of up to 15 km:  bends x terrain x scenery x hairpins
+ * For the best stretch of up to 15 km:  bends x (1 + terrain + scenery + hairpins bonuses)
+ * The bonuses add rather than multiply, so a road isn't rewarded for having a bit of everything: the Tail of the
+ * Dragon (all bends, low, few hairpins) can stand next to the Stelvio (fewer bends, huge climb, hairpin stacks).
  *   bends     km in bends weighted by tightness for your taste; built-up slices count 30%
- *   terrain   x1..x2 for 0..1200 m of climb within the stretch, or up to x1.6 for rolling crests and dips
- *   scenery   x1..x1.5: open views down over the surroundings, drop-offs, viewpoints
- *   hairpins  x1..x1.5 for 0..20 hairpins (more or less with taste)
+ *   terrain   x1..x1.5 for 0..1500 m of climb within the stretch, or up to x1.3 for rolling crests and dips
+ *   scenery   x1..x1.5: open views down over the surroundings, drop-offs, viewpoints, high alpine
+ *   hairpins  x1.5 at 20 hairpins (balanced), diminishing returns up to 60 (more or less with taste)
  * then x good km: how much of the road is at least half that good, up to 30 km, with diminishing returns
  * (6 km x0.63, 15 km x1, 30 km x1.41). Meh stretches neither help nor hurt.
+ * Linear 0-100, where 100 is the world's benchmark roads; anything even better also shows 100.
  */
 export function scoreRoad(road, taste = 0.5) {
   const { bins, ele } = decode(road);
   const w = tasteWeights(taste), nb = bins.length, binKm = BIN / 1000;
   const bend = bins.map((b) => b.c.reduce((s, n, k) => s + n * (STEP / 1000) * w.bends[k], 0) * (1 - (1 - BUILT_UP_KEEP) * b.u));
   const hp = bins.map((b) => b.h * (b.u > 0.5 ? BUILT_UP_KEEP : 1));
-  const scen = bins.map(sliceScenery);
+  const tl = treeline(road.coords[0][1]);
+  const alpine = ele.map((e) => Math.max(0, Math.min(1, (e - tl + 200) / 400)));
+  const scen = bins.map((b, i) => sliceScenery(b, alpine[i]));
   const pre = (arr) => arr.reduce((p, v) => (p.push(p[p.length - 1] + v), p), [0]);
   const [pB, pH, pS, pR] = [pre(bend), pre(hp), pre(scen), pre(bins.map((b) => b.r))];
   const sum = (p, i, j) => p[j] - p[i];
@@ -140,15 +152,16 @@ export function scoreRoad(road, taste = 0.5) {
   for (let i = 0; i + W <= nb; i++) {
     const win = ele.slice(i, i + W);
     const relief = Math.max(...win) - Math.min(...win);
+    const climb = Math.min(relief, 1500) / 1500;
     const rolling = Math.min(1, sum(pR, i, i + W) / (W * binKm) / 1.5) * 0.6;
     const parts = {
       bends: sum(pB, i, i + W),
-      terrain: 1 + Math.max(Math.min(relief, 1200) / 1200, rolling),
+      terrain: 1 + 0.5 * Math.max(climb, rolling),
       scenery: 1 + 0.5 * (sum(pS, i, i + W) / W),
-      hairpins: 1 + (w.hairpinBonus * Math.min(sum(pH, i, i + W), 20)) / 40,
+      hairpins: hairpinFactor(sum(pH, i, i + W), w.hairpinBonus),
     };
-    const fun = parts.bends * parts.terrain * parts.scenery * parts.hairpins;
-    if (!best || fun > best.fun) best = { fun, i, parts, rolling: rolling > relief / 1200 };
+    const fun = parts.bends * (parts.terrain + parts.scenery + parts.hairpins - 2);
+    if (!best || fun > best.fun) best = { fun, i, parts, rolling: rolling > climb };
   }
 
   // how intense each part of the road is (bends + scenery per km, smoothed over 1 km)
@@ -160,7 +173,8 @@ export function scoreRoad(road, taste = 0.5) {
   const goodKm = dens.filter((d) => d >= 0.5 * winMean).length * binKm;
   const lengthF = Math.sqrt(Math.min(goodKm, GOOD_KM_CAP) / WINDOW_KM);
   const intensity = best.fun / (W * binKm);
-  const score = funScale((100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste)));
+  const linear = (100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste));
+  const score = Math.round(Math.min(100, linear));
 
   // hot spots: stretches within 70% of the road's most intense kilometre, at least 400 m long
   const peakDens = Math.max(...dens), hot = [];
@@ -181,11 +195,12 @@ export function scoreRoad(road, taste = 0.5) {
 
   const count = (f) => bins.filter(f).length * binKm;
   return {
-    score, intensity, lengthF, goodKm, parts: best.parts, rolling: best.rolling,
+    score, linear, intensity, lengthF, goodKm, parts: best.parts, rolling: best.rolling,
     stretch: [best.i * BIN, (best.i + W) * BIN], hot, peak, length: nb * BIN,
     scenery: {
       score: Math.round((100 * scen.reduce((a, b) => a + b, 0)) / nb),
       viewKm: count((b) => b.v >= 0.5), dropKm: count((b) => b.p >= 0.5),
+      alpineKm: alpine.filter((a) => a >= 0.5).length * binKm,
       viewpoints: bins.reduce((a, b) => a + b.x, 0), builtPct: Math.round((100 * bins.reduce((a, b) => a + b.u, 0)) / nb),
     },
   };
@@ -398,13 +413,26 @@ function searchsorted(arr, v) {
   return lo;
 }
 
-/** Bend class per resampled point: 0 straight, 1 sweeping ... 4 hairpin-tight (circle through i-2, i, i+2). */
+/**
+ * Bend class per resampled point: 0 straight, 1 sweeping ... 4 hairpin-tight.
+ *
+ * Radius of the circle through the points 20 m either side, cross-checked at 40 m. On a 40 m chord a 1 m
+ * digitising wobble already reads as a 175 m "sweeper", so detailed OSM mapping would invent bends. A real
+ * bend has the same radius at both scales; a wobble vanishes at the wider one. The 0.7 lets hairpins (shorter
+ * than 80 m) keep their tight radius.
+ */
 function bendClasses(x, y) {
-  const k = RADIUS_OFFSET, cls = new Uint8Array(x.length);
-  for (let i = k; i < x.length - k; i++) {
+  const n = x.length, cls = new Uint8Array(n);
+  const radius = (i, k) => {
     const ax = x[i - k], ay = y[i - k], bx = x[i], by = y[i], cx = x[i + k], cy = y[i + k];
     const ab = Math.hypot(bx - ax, by - ay), bc = Math.hypot(cx - bx, cy - by), ca = Math.hypot(ax - cx, ay - cy);
     const r = (ab * bc * ca) / (2 * Math.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)));
+    return Number.isFinite(r) ? r : Infinity;
+  };
+  const k = RADIUS_OFFSET, wide = 2 * RADIUS_OFFSET;
+  for (let i = k; i < n - k; i++) {
+    let r = radius(i, k);
+    if (i >= wide && i < n - wide) r = Math.max(r, 0.7 * radius(i, wide));
     for (let b = 0; b < BENDS.length; b++) if (r < BENDS[b][0]) cls[i] = b + 1;
   }
   return cls;

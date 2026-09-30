@@ -684,6 +684,7 @@ function renderDetail() {
   const hot = fx.hot.map((h) => span(v, h)).sort((a, b) => a[0] - b[0]);
   const sc = fx.scenery;
   const scen = [
+    sc.alpineKm >= 0.4 && `high alpine for ${sc.alpineKm.toFixed(1)} km`,
     sc.viewKm >= 0.4 && `open views for ${sc.viewKm.toFixed(1)} km`,
     sc.dropKm >= 0.4 && `drop-offs for ${sc.dropKm.toFixed(1)} km`,
     sc.viewpoints && `${sc.viewpoints} viewpoint${sc.viewpoints > 1 ? "s" : ""}`,
@@ -698,12 +699,11 @@ function renderDetail() {
       <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)}</span>`).join("")}</div>
       <div class="factors">
         <span title="Weighted km of bends in the best stretch, for your taste">${parts.bends.toFixed(1)} <small>bends</small></span>
-        <span class="x">×</span>
-        <span title="${fx.rolling ? "Rolling: crests and dips" : "Climb within the stretch"}">${parts.terrain.toFixed(2)} <small>${fx.rolling ? "rolling" : "terrain"}</small></span>
-        <span class="x">×</span>
-        <span title="Views, drop-offs and viewpoints">${parts.scenery.toFixed(2)} <small>scenery</small></span>
-        <span class="x">×</span>
-        <span title="Hairpins in the stretch">${parts.hairpins.toFixed(2)} <small>hairpins</small></span>
+        <span class="x">× (1</span>
+        <span title="${fx.rolling ? "Rolling: crests and dips" : "Climb within the stretch"}">+${(parts.terrain - 1).toFixed(2)} <small>${fx.rolling ? "rolling" : "terrain"}</small></span>
+        <span title="Views, drop-offs, viewpoints and high alpine terrain">+${(parts.scenery - 1).toFixed(2)} <small>scenery</small></span>
+        <span title="Hairpins in the stretch">+${(parts.hairpins - 1).toFixed(2)} <small>hairpins</small></span>
+        <span class="x">)</span>
       </div>
       <div class="fun-note">${notes}</div>
       ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)}–${km(b)}`).join(", ")}</div>` : ""}

@@ -30,7 +30,10 @@ Every road is recorded in 200 m slices (bend mix, hairpins, crests and dips, bui
 viewpoint), stored as a compact `bins` string so the site can re-score it for any taste. A road is scored on its
 **best stretch of up to 15 km**:
 
-**bends × terrain × scenery × hairpins**, then **× good km**
+**bends × (1 + terrain + scenery + hairpins bonuses)**, then **× good km**
+
+The bonuses add rather than multiply, so roads aren't rewarded for having a bit of everything: the Tail of the
+Dragon (all bends, low, few hairpins) can stand next to the Stelvio (fewer bends, huge climb, hairpin stacks).
 
 - **Bends:** each road is resampled every 10 m. The circle through the points 20 m either side gives the
   bend radius, banded as sweeping (< 175 m), flowing (< 100 m), tight (< 60 m) and hairpin-tight (< 30 m).
@@ -44,20 +47,22 @@ viewpoint), stored as a compact `bins` string so the site can re-score it for an
   | hairpins     | 0.6      | 1.0     | 1.7   | 2.4           | up to ×2      |
 
   This builds on the approach of [roadcurvature.com](https://roadcurvature.com/) (Adam Franco).
-- **Terrain:** ×1 to ×2 for 0 to 1,200 m of climb within the stretch, or up to ×1.6 for rolling crests and dips
-  (at least 5 m swings).
-- **Scenery:** ×1 to ×1.5.
+- **Terrain:** +0 to +0.5 for 0 to 1,500 m of climb within the stretch, or up to +0.3 for rolling crests and dips
+  (at least 5 m swings). Deliberately modest, so low but very twisty roads aren't halved.
+- **Scenery:** +0 to +0.5.
   - *View:* the share of the horizon 0.8 to 1.6 km around that lies at least 60 m below the road (half open = full view).
   - *Drop-off:* the steepest fall-away within 120 m either side.
   - *Viewpoints:* OSM `tourism=viewpoint` nodes within 200 m.
-- **Hairpins:** 150° or more of turning within 120 m.
+  - *High alpine:* above a latitude-based treeline (about 2,000 m in the Alps and Carpathians, 950 m in western Norway).
+- **Hairpins:** 150° or more of turning within 120 m. +0.5 for 20 (balanced taste), then diminishing returns
+  up to 60.
 - **Good km:** the km of road at least half as intense as the best stretch, up to 30 km, as √(km ÷ 15)
   (6 km ×0.63, 15 km ×1, 30 km ×1.41). Meh stretches neither help nor hurt.
 
 Hot spots are the stretches within 70% of the road's most intense kilometre, and ★ marks the peak.
 The scale is fixed (`SCORE_REF`), so scores compare across regions, and it's normalised per taste (against a
-typical great pass) so the slider reshuffles roads without inflating them. Scores are linear up to 80 and
-compressed above, so 100 (a perfect road) is never reached; the best road around Geneva is about 93.
+typical great pass) so the slider reshuffles roads without inflating them. It's linear, with **100 set by the
+world's benchmark roads** (Stelvio, Grossglockner, Tail of the Dragon); anything better also shows 100.
 
 How the raw data becomes roads:
 

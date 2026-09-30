@@ -125,26 +125,27 @@
     <button class="about-close btn icon" aria-label="Close">✕</button>
     <h2>What makes a road fun?</h2>
     <p>Every paved road in OpenStreetMap is measured every 10 metres. A road is scored on <b>its best stretch</b>
-      (up to 15 km), so a great pass isn't dragged down by the valley road leading to it. That stretch scores:</p>
+      (up to 15 km), so a great pass isn't dragged down by the valley road leading to it. Its bends are the base,
+      and terrain, scenery and hairpins each <b>add</b> a bonus on top (they don't multiply, so a road isn't rewarded
+      just for having a bit of everything):</p>
     <ol>
       <li><b>Bends.</b> How tight the road turns at each point: <i>sweeping</i> (radius under 175 m), <i>flowing</i>
         (100 m), <i>tight</i> (60 m) or <i>hairpin-tight</i> (30 m). Every kilometre in a bend counts, weighted by
         your taste: towards <b>Sweepers</b> fast, flowing roads rise; towards <b>Hairpins</b> switchback stacks win.
         Bends through villages count only 30%: nice to look at, not to ride hard.</li>
-      <li><b>× Terrain.</b> Up to ×2 for 1,200 m of climb, or up to ×1.6 for rolling crests and dips, so hilly
-        roads without a big climb aren't punished.</li>
-      <li><b>× Scenery.</b> Up to ×1.5 where the view opens up below the road (balcony roads above lakes
+      <li><b>+ Terrain.</b> Up to +0.5 for 1,500 m of climb, or up to +0.3 for rolling crests and dips. Kept
+        modest on purpose: a low road that's all bends (like the Tail of the Dragon) is still a great road.</li>
+      <li><b>+ Scenery.</b> Up to +0.5 for high alpine terrain above the treeline, or where the view opens up below the road (balcony roads above lakes
         and valleys), runs along a steep drop-off, or passes a marked viewpoint.</li>
-      <li><b>× Hairpins.</b> The signature of a real pass (150° or more of turning within 120 m): up to ×1.5,
-        more or less with your taste.</li>
+      <li><b>+ Hairpins.</b> The signature of a real pass (150° or more of turning within 120 m): +0.5 for 20,
+        and still a bit more for Stelvio-style stacks of 40 or 60. More or less with your taste.</li>
     </ol>
     <p><b>× Good km.</b> Finally, how much of the road is good riding: the kilometres at least half as good as
       its best stretch, up to 30 km. Meh stretches neither help nor hurt. A 6 km gem counts ×0.63, 15 km ×1,
       30 km of greatness ×1.41.</p>
     <p>On the map, the <b>hot spots</b> glow orange and ★ marks the single best bit.</p>
     <p>The scale is fixed, so scores compare anywhere, and your taste reshuffles roads without inflating them.
-      100 would be a perfect road: scores up to 80 are linear, above that they're squeezed so nothing quite gets
-      there. The best road around Geneva scores in the low 90s.</p>
+      <b>100 is the world's best</b>: the Stelvio, Grossglockner and Tail of the Dragon score around there.</p>
     <p><b>Not in the score</b>, but shown as warnings: narrow or single-lane stretches, tolls, tunnels, and seasonal
       closures. Unpaved, private and farm-only roads are left out entirely.</p>
     <p class="muted">Road data changes: check closures and conditions before you ride.</p>

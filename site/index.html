@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Twisty Roads Geneva</title>
-  <meta name="description" content="The twistiest roads and mountain passes around Geneva, ranked by curves, hairpins and climb, on a 3D terrain map.">
+  <title>Twisty Roads</title>
+  <meta name="description" content="Find the most fun roads anywhere: every paved road scored on its bends, hairpins and climb, on a 3D terrain map.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26c6 0 6-8 12-8s4-12 12-12' fill='none' stroke='%23d94801' stroke-width='4' stroke-linecap='round'/></svg>">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
@@ -13,32 +13,13 @@
   <div class="app">
     <aside class="panel">
       <header class="brand">
-        <h1>Twisty roads</h1>
-        <p>Every paved road scored by how often it bends and how much it climbs. Geneva, Jura, Savoie, Valais and Aosta are built in. Scan anywhere else below.</p>
+        <h1>Twisty Roads</h1>
+        <p>The most fun roads anywhere, scored on their bends, hairpins and climb. <button id="aboutBtn" class="link">How it's scored</button></p>
       </header>
 
-      <div class="controls">
-        <input id="search" type="search" placeholder="Search a road, pass or town" autocomplete="off">
-        <div class="row">
-          <label class="select">
-            <span>Sort</span>
-            <select id="sort">
-              <option value="score">Fun score</option>
-              <option value="density">Curves per km</option>
-              <option value="hairpins">Hairpins</option>
-              <option value="climb">Climb</option>
-              <option value="eleMax">Highest point</option>
-              <option value="len">Length</option>
-            </select>
-          </label>
-          <label class="chip"><input id="passesOnly" type="checkbox"> Passes only</label>
-        </div>
-      </div>
-
       <form id="scanForm" class="explore">
-        <label for="place">Explore somewhere else</label>
         <div class="row">
-          <input id="place" type="search" placeholder="Town or area, e.g. Chamonix" autocomplete="off">
+          <input id="place" type="search" placeholder="Explore a town or area…" autocomplete="off" aria-label="Town or area to explore">
           <select id="radius" aria-label="Search radius">
             <option value="20">20 km</option>
             <option value="30" selected>30 km</option>
@@ -47,18 +28,46 @@
         </div>
         <div class="row">
           <button id="scanGo" class="btn primary" type="submit">Find twisties</button>
-          <button id="scanView" class="btn" type="button">Scan map view</button>
+          <button id="nearMe" class="btn" type="button" title="Scan around your current location">Near me</button>
+          <button id="scanView" class="btn" type="button" title="Scan around the centre of the map">Map view</button>
         </div>
         <p id="scanStatus" class="scan-status" hidden></p>
+        <div id="areas" class="areas" hidden></div>
       </form>
+
+      <div class="controls">
+        <label class="taste">
+          <span class="taste-head">Your taste <b id="tasteLabel"></b></span>
+          <input id="taste" type="range" min="0" max="100" step="5" value="50" aria-label="Taste, from fast sweepers to tight hairpins">
+          <span class="taste-ends"><span>Sweepers</span><span>Hairpins</span></span>
+        </label>
+        <input id="search" type="search" placeholder="Filter by road, pass or town" autocomplete="off" aria-label="Filter roads">
+        <div class="row">
+          <label class="select">
+            <span>Sort</span>
+            <select id="sort">
+              <option value="score">Fun score</option>
+              <option value="inBends">Share in bends</option>
+              <option value="hairpins">Hairpins</option>
+              <option value="climb">Climb</option>
+              <option value="eleMax">Highest point</option>
+              <option value="len">Length</option>
+            </select>
+          </label>
+          <label class="chip"><input id="inView" type="checkbox" checked> In view</label>
+          <label class="chip"><input id="passesOnly" type="checkbox"> Passes</label>
+        </div>
+      </div>
 
       <p id="count" class="count"></p>
       <ol id="list" class="list"></ol>
 
       <footer class="credits">
-        Road data © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ·
+        Roads © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ·
         Terrain: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> ·
-        Map: <a href="https://openfreemap.org">OpenFreeMap</a>
+        Map: <a href="https://openfreemap.org">OpenFreeMap</a> ·
+        Weather: <a href="https://open-meteo.com">Open-Meteo</a> ·
+        <a href="https://github.com/vehiculardesire/twisty-roads">Source</a>
       </footer>
     </aside>
 
@@ -90,7 +99,12 @@
             <button id="close" class="btn icon" aria-label="Close">✕</button>
           </div>
         </div>
-        <dl id="dStats" class="stats"></dl>
+        <div class="detail-body">
+          <div id="dFun" class="fun"></div>
+          <dl id="dStats" class="stats"></dl>
+          <div id="dWeather" class="weather"></div>
+        </div>
+        <div id="dWarn" class="warn" hidden></div>
         <div class="profile-wrap">
           <canvas id="profile"></canvas>
           <div id="pTip" class="ptip" hidden></div>
@@ -105,6 +119,28 @@
       </section>
     </main>
   </div>
+
+  <dialog id="about" class="about">
+    <button class="about-close btn icon" aria-label="Close">✕</button>
+    <h2>What makes a road fun?</h2>
+    <p>Every paved road in OpenStreetMap is measured every 10 metres. The fun score multiplies three things:</p>
+    <ol>
+      <li><b>Bends.</b> At each point we measure how tight the road turns: <i>sweeping</i> (radius under 175 m),
+        <i>flowing</i> (100 m), <i>tight</i> (60 m) or <i>hairpin-tight</i> (30 m). Every kilometre in a bend counts,
+        weighted by your taste: slide towards <b>Sweepers</b> and fast, flowing roads rise; towards <b>Hairpins</b>
+        and switchback stacks win. Straights count for nothing, and a straight longer than 2.5 km ends a section,
+        so a great pass isn't diluted by the valley road to it.</li>
+      <li><b>Mountain.</b> Climbing a mountain beats wiggling along a valley: up to <b>×2</b> for 1,200 m
+        between the lowest and highest point.</li>
+      <li><b>Hairpins.</b> The signature of a real pass (150° or more of turning within 120 m): up to <b>×1.5</b>
+        for 20 hairpins (more if you like hairpins, none if you like sweepers).</li>
+    </ol>
+    <p>The scale is fixed, so scores compare anywhere: Cormet de Roselend in the French Alps is 100, and a road can
+      score higher.</p>
+    <p><b>Not in the score</b>, but shown as warnings: narrow or single-lane stretches, tolls, tunnels, and seasonal
+      closures. Unpaved, private and farm-only roads are left out entirely.</p>
+    <p class="muted">Road data changes: check closures and conditions before you ride.</p>
+  </dialog>
 
   <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
   <script type="module" src="app.js"></script>

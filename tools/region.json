@@ -1,0 +1,6 @@
+{
+  "bbox": [45.4, 5.3, 46.95, 8.1],
+  "cellDeg": 0.4,
+  "maxRoads": 900,
+  "out": "site/data/home.json"
+}

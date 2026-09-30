@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # commits made by the data refresh don't trigger "push" (GitHub blocks that for its own token), so redeploy after it
+  workflow_run:
+    workflows: ["Refresh road data"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -17,7 +21,7 @@ concurrency:
 jobs:
   deploy:
     # Free GitHub accounts only get Pages on public repos: skip quietly while the repo is private.
-    if: ${{ !github.event.repository.private }}
+    if: ${{ !github.event.repository.private && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -1,83 +1,83 @@
-# Twisty roads
+# Twisty Roads
 
-Finds the twistiest paved roads and mountain passes around Geneva and shows them on a 3D terrain map,
-with an elevation profile, a bend-by-bend colouring, a fly-along camera and GPX export.
+Finds the most fun roads anywhere: every paved road in OpenStreetMap scored on its bends, hairpins and climb,
+shown on a 3D terrain map with an elevation profile, bend-by-bend colouring, weather at the top, a fly-along
+camera and GPX export.
 
-Static site, no backend: it runs on GitHub Pages.
+**Live:** https://vehiculardesire.github.io/twisty-roads/
 
-**Scan anywhere**: type a town (or use "Scan map view") and the browser downloads that area's roads
-from OpenStreetMap and elevation tiles, scores them in a Web Worker (`site/scan.js`) and adds them to the
-map. Scans are shareable: the URL becomes `#scan=lat,lon,radius`. It usually takes 20 s to 2 min,
-depending on how busy the public Overpass servers are.
+Static site, no backend, no API keys: it runs on GitHub Pages.
+
+- **Scan anywhere**: type a town, use *Near me* or *Map view*. The browser downloads that area's roads and
+  terrain and scores them in a Web Worker (20 s to 2 min, depending on how busy the public Overpass servers are).
+  Scans are saved in your browser (*Your areas*) and shareable (`#scan=lat,lon,radius`).
+- **Built-in region**: one region is pre-built so the site opens instantly, and refreshed monthly by a
+  GitHub Action.
+- **Taste slider**: from fast sweepers to tight hairpins; re-ranks everything.
+- **Selected road**: drawn as a smooth curve through the OSM points and re-measured every 10 m, with weather at
+  its highest point (Open-Meteo) and warnings for narrow stretches, tolls, tunnels and seasonal closures.
 
 ```
-pipeline/     Python: pre-builds the Geneva region -> site/data/roads.json (instant on page load)
-site/         the map (plain HTML/JS, MapLibre GL from a CDN, no build step)
-site/scan.js  the same algorithm in JavaScript, for scanning anywhere from the browser
+site/                 the app (plain HTML/JS, MapLibre GL from a CDN, no build step)
+site/core/twisty.js   the engine: OSM + terrain -> scored road sections (browser and Node)
+site/scan-worker.js   runs the engine in the browser
+tools/                Node script that pre-builds the built-in region (tools/region.json)
 ```
 
-`pipeline/build.py` and `site/scan.js` implement the same algorithm; keep the constants in step.
-Scores use a fixed scale (Cormet de Roselend = 100), so they're comparable between regions.
+## What makes a road fun
 
-## How a road gets its score
+The fun score multiplies three things (the site's *How it's scored* explains it for riders):
 
-1. **Roads**: every `trunk / primary / secondary / tertiary / unclassified` road from OpenStreetMap
-   (via Overpass), minus unpaved, private, agricultural-only and roundabouts.
-2. **Chaining**: OSM splits roads into many small ways. They're joined back into continuous roads
-   where exactly two ways meet end to end, or where the road number / name continues through a junction
-   (taking the straightest continuation).
-3. **Curvature**: each road is resampled every 10 m. At each point the radius of the circle through the
-   points 20 m either side gives the bend radius, which is banded:
+1. **Bends.** Each road is resampled every 10 m; the circle through the points 20 m either side gives the
+   bend radius, banded as sweeping (< 175 m), flowing (< 100 m), tight (< 60 m) and hairpin-tight (< 30 m).
+   Every km in a bend counts, weighted by taste:
 
-   | radius   | band          | weight |
-   |----------|---------------|--------|
-   | < 30 m   | hairpin-tight | 2.0    |
-   | < 60 m   | tight         | 1.6    |
-   | < 100 m  | flowing       | 1.3    |
-   | < 175 m  | sweeping      | 1.0    |
-   | straight |               | 0      |
+   | taste        | sweeping | flowing | tight | hairpin-tight | hairpin bonus |
+   |--------------|---------:|--------:|------:|--------------:|--------------:|
+   | sweepers     | 1.6      | 1.4     | 1.0   | 0.6           | none          |
+   | balanced     | 1.0      | 1.3     | 1.6   | 2.0           | up to ×1.5    |
+   | hairpins     | 0.6      | 1.0     | 1.7   | 2.4           | up to ×2      |
 
-   *Curvy km* = Σ (length × weight). This is the approach used by
-   [roadcurvature.com](https://roadcurvature.com/) (Adam Franco).
-4. **Sections**: roads are cut wherever there's more than 2.5 km of straight, so a great pass isn't
-   diluted by the valley road leading to it. Sections under 2.5 km, or not curvy enough, are dropped.
-5. **Hairpins**: 150° or more of turning in the same direction within 120 m.
-6. **Elevation**: sampled from AWS Terrain Tiles (Terrarium, zoom 12, ~25 m). Tunnels and bridges are
-   bridged over; the profile is median-filtered, slope-limited to 22 % and smoothed, because a road
-   cut into a cliff otherwise picks up the cliff.
-7. **Fun score** = curvy km × (1 + relief/1200 m, max 2×) × (1 + hairpins/40, max 1.5×), scaled so
-   Cormet de Roselend is 100 (a road can score above 100).
+   This builds on the approach of [roadcurvature.com](https://roadcurvature.com/) (Adam Franco).
+2. **Mountain.** ×1 to ×2 for 0 to 1,200 m between the lowest and highest point.
+3. **Hairpins.** 150° or more of turning within 120 m.
 
-Named mountain passes (`mountain_pass=yes` nodes on the road) name the section; otherwise it's the
-road's name or number, with the nearest towns at each end.
+Scale: Cormet de Roselend at balanced taste = 100, so scores compare across regions.
 
-## Run the pipeline
+How the raw data becomes roads:
 
-```bash
-cd pipeline
-pip install -r requirements.txt
-python fetch_osm.py     # ~28 Overpass queries, cached in pipeline/cache/ (safe to re-run)
-python build.py         # ~1 min, writes site/data/roads.json
-```
+- **Roads:** `trunk / primary / secondary / tertiary / unclassified`, minus unpaved, private, farm-only and
+  roundabouts.
+- **Chaining:** OSM ways are joined into continuous roads where two meet end to end, or where the same road
+  number or name continues through a junction.
+- **Sections:** a road is cut wherever it has more than 2.5 km of straight.
+- **Elevation:** AWS Terrain Tiles (zoom 12, about 25 m). Tunnels and bridges are bridged over, and the profile is
+  median-filtered, slope-limited to 22% and smoothed, because a road cut into a cliff otherwise picks up the cliff.
 
-Change the area in `pipeline/region.py`.
-
-## Run the site locally
+## Run locally
 
 ```bash
 python -m http.server 8765 --directory site
 ```
 
+Rebuild the built-in region (Node 20+; about 30 queries to Overpass, so be patient):
+
+```bash
+node tools/build-region.mjs
+```
+
 ## Deploy
 
-Push to `main`: `.github/workflows/pages.yml` publishes `site/` to GitHub Pages
-(Settings → Pages → Source: GitHub Actions).
+Push to `main`. `pages.yml` publishes `site/` to GitHub Pages (Settings → Pages → Source: GitHub Actions).
+`refresh-data.yml` rebuilds `site/data/home.json` monthly and whenever the engine changes, then redeploys.
 
 ## Data & credits
 
 - Roads and passes © OpenStreetMap contributors (ODbL)
 - Terrain: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (Mapzen/Tilezen)
-- Base map: [OpenFreeMap](https://openfreemap.org), no API key
+- Base map: [OpenFreeMap](https://openfreemap.org)
+- Weather: [Open-Meteo](https://open-meteo.com)
 - Place search: [Photon](https://photon.komoot.io) (komoot)
-- Road queries: public Overpass API servers (overpass-api.de, private.coffee, kumi.systems). Please keep scans occasional.
+- Road queries: public Overpass API servers (overpass-api.de, private.coffee, kumi.systems). Please keep scans
+  occasional.
 - Map library: [MapLibre GL JS](https://maplibre.org)

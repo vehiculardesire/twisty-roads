@@ -1,0 +1,38 @@
+name: Refresh road data
+
+# Rebuilds the built-in region (site/data/home.json) from fresh OpenStreetMap data with the same engine
+# the site uses: monthly, when the engine changes, or by hand from the Actions tab.
+on:
+  schedule:
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/core/**", "tools/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240          # the public Overpass servers can be slow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/build-region.mjs
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data/home.json
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Refresh road data"
+          git pull --rebase
+          git push

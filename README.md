@@ -1,124 +1,134 @@
 # Twisty Roads
 
-Finds the most fun roads anywhere: every paved road in OpenStreetMap scored on its bends, hairpins and climb,
-shown on a 3D terrain map with an elevation profile, bend-by-bend colouring, weather at the top, a fly-along
-camera and GPX export.
+**Find the most fun roads anywhere.** Every paved road in OpenStreetMap is scored on its bends, hairpins, climb
+and views, and shown on a 3D terrain map.
 
-**Live:** https://vehiculardesire.github.io/twisty-roads/
+**Try it: https://vehiculardesire.github.io/twisty-roads/**
 
-Static site, no backend, no API keys: it runs on GitHub Pages.
+A static site with no backend, no accounts and no API keys, hosted free on GitHub Pages.
 
-- **Scan anywhere**: type a town, use *Near me* or *Map view*. The browser downloads that area's roads and
-  terrain and scores them in a Web Worker (20 s to 2 min, depending on how busy the public Overpass servers are).
-  Scans are saved in your browser (*Your areas*) and shareable (`#scan=lat,lon,radius`).
-- **Built-in region**: one region is pre-built so the site opens instantly, and refreshed monthly by a
-  GitHub Action.
-- **Taste slider**: from fast sweepers to tight hairpins; re-ranks everything.
-- **Selected road**: drawn as a smooth curve through the OSM points and re-measured every 10 m, with weather at
-  its highest point (Open-Meteo) and warnings for narrow stretches, tolls, tunnels and seasonal closures.
-- **Your roads** (all kept in your browser, nothing uploaded):
-  - *Favourites* (☆).
-  - *Your rides:* import GPX files (button or drag and drop). A road counts as ridden when 60% of it is within
-    35 m of a track, and you can filter by "Not ridden yet".
-  - *Yay / nay ratings:* after 2 of each, "Learn my taste" searches taste × how much terrain, scenery and hairpins
-    count (×0.5 / ×1 / ×1.5) for the settings that rank your yays above your nays, staying close to the defaults.
-- **Stops**: cafés, food, mountain huts and fuel within 200 m of the selected road (one Overpass query per road).
-- **Share**: an image card (map, score, breakdown, profile, credits) plus a link. Roads from a scan link with the
-  scan, so the recipient's browser re-runs it.
-- **Rotate around the cursor**: right-drag or Ctrl+drag pivots on the point you grab.
+## What it does
+
+- **Ranks roads** by a fun score, with a **taste slider** from fast sweepers to tight hairpins.
+- **Scans anywhere.** Type a town, or use *Near me* or *Map view*. Your browser downloads that area's roads and
+  terrain and scores them on the spot (20 s to 2 min, depending on the public map servers). Scans are saved and
+  shareable. The Geneva region is built in, so the site opens instantly.
+- **Shows each road in detail:**
+  - bend-by-bend colouring on a smooth line
+  - glowing hot spots and a ★ on the best bit
+  - an elevation profile coloured by gradient
+  - weather at the top, including how cold it feels at riding speed
+  - warnings for narrow stretches, tolls, tunnels and seasonal closures
+  - cafés, food, huts and fuel along the way
+- **Fly along** any road in 3D. Export it as **GPX**, or send it to Google Maps to navigate.
+- **Share** a road as an image card plus a link.
+- **Learns you:**
+  - ☆ favourites
+  - import your **GPX rides** to see which roads you've ridden and which you haven't
+  - rate roads 👍 / 👎 and it tunes the scoring to your taste
+
+Everything personal (favourites, ratings, rides) stays in your browser and is never uploaded.
+
+## How the fun score works
+
+A road is scored on its **best stretch** (up to 15 km), so a great pass isn't dragged down by the valley road to it:
+
+> **bends × (1 + terrain + scenery + hairpins)** × **good km**
+
+- **Bends:** how tight the road turns every 10 m, from *sweeping* (radius under 175 m) to *hairpin-tight*
+  (under 30 m). Every km in a bend counts, weighted by your taste. Bends through villages count 30%: nice to look
+  at, not to ride hard.
+- **Terrain:** up to +0.5 for a big climb, or +0.3 for rolling crests and dips.
+- **Scenery:** up to +0.5 for open views down over the surroundings, steep drop-offs, marked viewpoints and high
+  alpine terrain.
+- **Hairpins:** up to +0.5 for 20, a bit more for Stelvio-style stacks.
+- **Good km:** how much of the road is at least half that good. A 6 km gem counts ×0.63, 15 km ×1, and 30 km of
+  greatness ×1.41. Meh stretches neither help nor hurt.
+
+The bonuses add rather than multiply, so a road isn't rewarded just for having a bit of everything.
+
+**Calibration.** 100 is the world's best. Benchmark roads scanned with the app score Stelvio 95, Grossglockner 81,
+Transfăgărășan 81 and Tail of the Dragon 71. Around Geneva, the Colle del Nivolet scores 80. Col de L'Arpettaz hits
+the ceiling: it packs 57 hairpins into 26 km, more bends per km than the Stelvio.
+
+**What it can't see:** road width (rarely mapped), surface quality, traffic, waterfalls or glaciers, fame, or
+whether a road is open today. A high score means "this will be very twisty"; a tight mountain lane and a wide
+famous pass can score the same.
+
+<details>
+<summary>The details, for the curious</summary>
+
+- **Roads:** `trunk / primary / secondary / tertiary / unclassified` from OpenStreetMap (via Overpass), minus
+  unpaved, private, farm-only and roundabouts. OSM ways are chained into continuous roads, and cut into sections at
+  straights longer than 4 km.
+- **Bend radius:** the circle through the points 20 m either side of each 10 m sample, cross-checked at ±40 m so
+  wobble in detailed map data doesn't count as bends. This builds on the approach of
+  [roadcurvature.com](https://roadcurvature.com/) (Adam Franco).
+
+  | taste    | sweeping | flowing | tight | hairpin-tight | hairpin bonus |
+  |----------|---------:|--------:|------:|--------------:|--------------:|
+  | sweepers | 1.6      | 1.4     | 1.0   | 0.6           | none          |
+  | balanced | 1.0      | 1.3     | 1.6   | 2.0           | +0.5 at 20    |
+  | hairpins | 0.6      | 1.0     | 1.7   | 2.4           | +1.0 at 20    |
+
+- **Hairpins:** 150° or more of turning within 120 m; diminishing returns from 20 up to 60.
+- **Built-up:** explicit urban speed zones, or within 350 m of a village, 800 m of a town or 1.8 km of a city.
+- **Elevation:** AWS Terrain Tiles (zoom 12, about 25 m). Tunnels and bridges are bridged over, and the profile is
+  median-filtered, slope-limited to 22% and smoothed, because a road cut into a cliff otherwise picks up the cliff.
+- **Terrain bonus:** 0.5 × max(climb in the stretch ÷ 1,500 m, rolling), where rolling is crests and dips of at
+  least 5 m per km, up to 0.3.
+- **Scenery bonus**, per 200 m slice:
+  - *view:* the share of the horizon 0.8–1.6 km away that lies at least 60 m below the road (half open counts
+    as a full view)
+  - *drop-off:* the steepest fall-away within 120 m
+  - *viewpoints:* `tourism=viewpoint` within 200 m
+  - *high alpine:* above a latitude-based treeline, about 2,000 m in the Alps and 950 m in western Norway
+- **Good km:** √(min(km, 30) ÷ 15), counting the km at least half as intense as the best stretch.
+- **Hot spots:** stretches within 70% of the road's most intense kilometre.
+- **Scale:** linear, normalised per taste so the slider reshuffles roads without inflating them, capped at 100.
+- **Taste learning:** tries every taste × how much terrain, scenery and hairpins count (×0.5 / ×1 / ×1.5),
+  keeping the settings that rank your 👍 roads above your 👎 roads while staying closest to the defaults.
+
+Each road stores its 200 m slices as a compact `bins` string, so the site re-scores for any taste without the engine.
+</details>
+
+## For developers
 
 ```
-site/                 the app (plain HTML/JS, MapLibre GL from a CDN, no build step)
-site/core/twisty.js   the engine: OSM + terrain -> scored road sections (browser and Node)
+site/                 the app: plain HTML/JS, MapLibre GL from a CDN, no build step
+site/core/twisty.js   the engine: OSM + terrain -> scored roads (runs in the browser and in Node)
 site/scan-worker.js   runs the engine in the browser
-site/personal.js      favourites, ratings, taste learning       site/rides.js   GPX import and ridden matching
-site/stops.js         cafés, food, fuel along a road            site/share.js   the share card
+site/personal.js      favourites, ratings, taste learning
+site/rides.js         GPX import and ridden matching
+site/stops.js         cafés, food and fuel along a road
+site/share.js         the share card
 site/db.js            browser storage for scans and rides
 tools/                Node script that pre-builds the built-in region (tools/region.json)
 ```
 
-## What makes a road fun
-
-Every road is recorded in 200 m slices (bend mix, hairpins, crests and dips, built-up share, view, drop-off,
-viewpoint), stored as a compact `bins` string so the site can re-score it for any taste. A road is scored on its
-**best stretch of up to 15 km**:
-
-**bends × (1 + terrain + scenery + hairpins bonuses)**, then **× good km**
-
-The bonuses add rather than multiply, so roads aren't rewarded for having a bit of everything: the Tail of the
-Dragon (all bends, low, few hairpins) can stand next to the Stelvio (fewer bends, huge climb, hairpin stacks).
-
-- **Bends:** each road is resampled every 10 m. The circle through the points 20 m either side gives the
-  bend radius, banded as sweeping (< 175 m), flowing (< 100 m), tight (< 60 m) and hairpin-tight (< 30 m).
-  Every km in a bend counts, weighted by taste. Bends in built-up slices count 30%: explicit urban speed zones,
-  or within 350 m of a village, 800 m of a town, or 1.8 km of a city.
-
-  | taste        | sweeping | flowing | tight | hairpin-tight | hairpin bonus |
-  |--------------|---------:|--------:|------:|--------------:|--------------:|
-  | sweepers     | 1.6      | 1.4     | 1.0   | 0.6           | none          |
-  | balanced     | 1.0      | 1.3     | 1.6   | 2.0           | up to ×1.5    |
-  | hairpins     | 0.6      | 1.0     | 1.7   | 2.4           | up to ×2      |
-
-  This builds on the approach of [roadcurvature.com](https://roadcurvature.com/) (Adam Franco).
-- **Terrain:** +0 to +0.5 for 0 to 1,500 m of climb within the stretch, or up to +0.3 for rolling crests and dips
-  (at least 5 m swings). Deliberately modest, so low but very twisty roads aren't halved.
-- **Scenery:** +0 to +0.5.
-  - *View:* the share of the horizon 0.8 to 1.6 km around that lies at least 60 m below the road (half open = full view).
-  - *Drop-off:* the steepest fall-away within 120 m either side.
-  - *Viewpoints:* OSM `tourism=viewpoint` nodes within 200 m.
-  - *High alpine:* above a latitude-based treeline (about 2,000 m in the Alps and Carpathians, 950 m in western Norway).
-- **Hairpins:** 150° or more of turning within 120 m. +0.5 for 20 (balanced taste), then diminishing returns
-  up to 60.
-- **Good km:** the km of road at least half as intense as the best stretch, up to 30 km, as √(km ÷ 15)
-  (6 km ×0.63, 15 km ×1, 30 km ×1.41). Meh stretches neither help nor hurt.
-
-Hot spots are the stretches within 70% of the road's most intense kilometre, and ★ marks the peak.
-The scale is fixed (`SCORE_REF`), so scores compare across regions, and it's normalised per taste (against a
-typical great pass) so the slider reshuffles roads without inflating them. It's linear, with **100 set by the
-world's benchmark roads** (Stelvio, Grossglockner, Tail of the Dragon); anything better also shows 100.
-
-**Calibration:** benchmark roads scanned with the app score Stelvio 95, Grossglockner 81, Transfăgărășan 81 and
-Tail of the Dragon 71. Around Geneva, Col de L'Arpettaz hits the ceiling (57 hairpins in 26 km, denser than the
-Stelvio) and the Colle del Nivolet scores 80.
-
-**Limits, stated openly on the site:** the score measures twistiness, climbing and views. It can't see road width
-(rarely mapped), surface quality, traffic, waterfalls or glaciers, fame or atmosphere, or whether a road is open
-today. A tight mountain lane and a wide famous pass can score the same.
-
-How the raw data becomes roads:
-
-- **Roads:** `trunk / primary / secondary / tertiary / unclassified`, minus unpaved, private, farm-only and
-  roundabouts.
-- **Chaining:** OSM ways are joined into continuous roads where two meet end to end, or where the same road
-  number or name continues through a junction.
-- **Sections:** a road is cut wherever it has more than 4 km of straight.
-- **Elevation:** AWS Terrain Tiles (zoom 12, about 25 m). Tunnels and bridges are bridged over, and the profile is
-  median-filtered, slope-limited to 22% and smoothed, because a road cut into a cliff otherwise picks up the cliff.
-
-## Run locally
+Run it locally:
 
 ```bash
 python -m http.server 8765 --directory site
 ```
 
-Rebuild the built-in region (Node 20+; about 30 queries to Overpass, so be patient):
+Rebuild the built-in region (Node 20+; about 30 Overpass queries, so be patient):
 
 ```bash
 node tools/build-region.mjs
 ```
 
-## Deploy
-
-Push to `main`. `pages.yml` publishes `site/` to GitHub Pages (Settings → Pages → Source: GitHub Actions).
-`refresh-data.yml` rebuilds `site/data/home.json` monthly and whenever the engine changes, then redeploys.
+**Deploy:** push to `main`.
+- `pages.yml` publishes `site/` to GitHub Pages whenever the site changes.
+- `refresh-data.yml` rebuilds the built-in region monthly and whenever the engine changes, then redeploys.
 
 ## Data & credits
 
-- Roads and passes © OpenStreetMap contributors (ODbL)
+- Roads, passes and stops © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors (ODbL)
 - Terrain: [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (Mapzen/Tilezen)
 - Base map: [OpenFreeMap](https://openfreemap.org)
 - Weather: [Open-Meteo](https://open-meteo.com)
 - Place search: [Photon](https://photon.komoot.io) (komoot)
-- Road queries: public Overpass API servers (overpass-api.de, private.coffee, kumi.systems). Please keep scans
+- Map queries: the public Overpass API servers (overpass-api.de, private.coffee, kumi.systems). Please keep scans
   occasional.
 - Map library: [MapLibre GL JS](https://maplibre.org)

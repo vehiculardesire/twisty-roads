@@ -3,6 +3,7 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]    # README or tooling changes don't need a redeploy
   workflow_dispatch:
   # commits made by the data refresh don't trigger "push" (GitHub blocks that for its own token), so redeploy after it
   workflow_run:

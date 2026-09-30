@@ -206,10 +206,6 @@ button, input, select { font: inherit; color: inherit; }
 }
 .stop:hover { border-color: var(--muted); }
 .stop small { color: var(--muted); }
-.stop-pin {
-  font-size: 15px; line-height: 1; padding: 3px; border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); cursor: default;
-}
 
 /* drag-and-drop overlay for GPX files */
 .drop {

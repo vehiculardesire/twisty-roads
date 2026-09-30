@@ -351,6 +351,11 @@ mapReady.then(() => {
     },
   });
 
+  map.addSource("stops", { type: "geojson", data: emptyFC });
+  map.addLayer({
+    id: "stops", type: "symbol", source: "stops",
+    layout: { "icon-image": ["get", "icon"], "icon-allow-overlap": true, "icon-ignore-placement": true },
+  });
   map.addSource("passes", { type: "geojson", data: passesGeoJSON() });
   map.addSource("scan-area", { type: "geojson", data: emptyFC });
   map.addLayer({
@@ -396,6 +401,23 @@ mapReady.then(() => {
   // hovering the selected road moves the profile crosshair
   map.on("mousemove", "sel-line", (e) => { if (state.view && !fly) setCursor(state.view.nearest(e.lngLat.lng, e.lngLat.lat)); });
   map.on("mouseleave", "sel-line", () => { if (!fly) setCursor(null); });
+
+  map.on("mousemove", "stops", (e) => {
+    map.getCanvas().style.cursor = "pointer";
+    tip.hidden = false;
+    tip.textContent = e.features[0].properties.label;
+    tip.style.left = `${e.point.x + 14}px`;
+    tip.style.top = `${e.point.y + 14}px`;
+  });
+  map.on("mouseleave", "stops", () => { map.getCanvas().style.cursor = ""; tip.hidden = true; });
+
+  // clicking empty map (not a road or a stop, with a few px of slack) closes the selected road
+  map.on("click", (e) => {
+    if (!state.sel || fly) return;
+    const { x, y } = e.point, pad = 6;
+    const hits = map.queryRenderedFeatures([[x - pad, y - pad], [x + pad, y + pad]], { layers: ["roads", "sel-line", "stops"] });
+    if (!hits.length) deselect();
+  });
 
   let moveTimer;
   map.on("moveend", () => { clearTimeout(moveTimer); moveTimer = setTimeout(() => state.inView && renderList(), 120); });
@@ -909,10 +931,27 @@ for (const [id, v] of [["#yay", 1], ["#nay", -1]]) {
 
 // ------------------------------------------------------------------ stops along the road
 
-let stopMarkers = [];
+/** Emoji drawn once into a small round icon, so stops can be a map layer (HTML markers are slow in 3D). */
+function stopIcon(emoji) {
+  const id = `stop:${emoji}`;
+  if (map.hasImage(id)) return id;
+  const px = 2, size = 26 * px, c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  g.fillStyle = "rgba(0, 0, 0, 0.25)";
+  g.beginPath(); g.arc(size / 2, size / 2 + px, size / 2 - px, 0, Math.PI * 2); g.fill();
+  g.fillStyle = "#ffffff";
+  g.beginPath(); g.arc(size / 2, size / 2, size / 2 - 2 * px, 0, Math.PI * 2); g.fill();
+  g.font = `${14 * px}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(emoji, size / 2, size / 2 + px);
+  map.addImage(id, g.getImageData(0, 0, size, size), { pixelRatio: px });
+  return id;
+}
+
 function clearStops() {
-  stopMarkers.forEach((m) => m.remove());
-  stopMarkers = [];
+  map.getSource("stops")?.setData(emptyFC);
 }
 
 async function loadStops(road) {
@@ -934,9 +973,13 @@ async function loadStops(road) {
   el.innerHTML = `<span class="stops-label">Stops</span>` + withKm.slice(0, 12).map((st, i) =>
     `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}">${st.icon} ${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("");
   el._stops = withKm;
-  stopMarkers = withKm.map((st) => new maplibregl.Marker({
-    element: Object.assign(document.createElement("div"), { className: "stop-pin", textContent: st.icon, title: st.name || st.kind }),
-  }).setLngLat([st.lon, st.lat]).addTo(map));
+  map.getSource("stops").setData({
+    type: "FeatureCollection",
+    features: withKm.map((st, i) => ({
+      type: "Feature", properties: { icon: stopIcon(st.icon), i, label: st.name ? `${st.kind}: ${st.name}` : st.kind },
+      geometry: { type: "Point", coordinates: [st.lon, st.lat] },
+    })),
+  });
 }
 $("#dStops").addEventListener("click", (e) => {
   if (e.target.id === "stopsRetry") return loadStops(state.sel);

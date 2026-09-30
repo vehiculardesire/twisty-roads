@@ -1,5 +1,10 @@
 /* Twisty Roads: MapLibre + 3D terrain + elevation profile. No build step. */
 import { ALGO_VERSION, BENDS, bendsAlong, scoreRoad } from "./core/twisty.js";
+import { idb } from "./db.js";
+import { currentMix, describeMix, isFav, learnTaste, me, rate, ratingOf, setTuned, toggleFav } from "./personal.js";
+import { addRide, loadRides, parseGPX, removeRide, riddenRoads } from "./rides.js";
+import { findStops } from "./stops.js";
+import { makeCard, share } from "./share.js";
 
 const $ = (s) => document.querySelector(s);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -19,10 +24,11 @@ const RIDING_SPEED = 80;   // km/h, for "feels like"
 
 // ------------------------------------------------------------------ data: built-in region + saved scans
 
-const [home, baseStyle, savedAreas] = await Promise.all([
+const [home, baseStyle, savedAreas, savedRides] = await Promise.all([
   fetch("data/home.json").then((r) => r.json()),
   fetch("https://tiles.openfreemap.org/styles/positron").then((r) => r.json()),
-  areasDB("getAll").catch(() => []),
+  idb("areas", "getAll").catch(() => []),
+  loadRides(),
 ]);
 // Drop the style's low-zoom shaded-relief raster: we draw our own hillshade, and when its server is slow
 // MapLibre waits on it forever.
@@ -30,13 +36,15 @@ delete baseStyle.sources.ne2_shaded;
 baseStyle.layers = baseStyle.layers.filter((l) => l.source !== "ne2_shaded");
 
 const state = {
-  sort: "score", query: "", passesOnly: false, inView: true,
-  taste: store.get("taste", 0.5),
+  sort: "score", query: "", passesOnly: false, inView: true, show: "all",
+  taste: me.tuned?.taste ?? store.get("taste", 0.5),
   sel: null, view: null, hover: null, is3d: true, exag: 1.4,
 };
 
 let roads = [], passes = [], byId = new Map();
 let areas = [];                   // saved scans, newest last
+let rides = savedRides;           // your imported GPX rides
+let ridden = new Set();           // ids of roads you've ridden (from those rides)
 addArea({ key: "home", roads: home.roads, passes: home.passes, bbox: home.bbox });
 for (const a of savedAreas.filter((a) => a.v === ALGO_VERSION).sort((a, b) => a.date - b.date)) addArea(a);
 
@@ -58,12 +66,13 @@ function addArea(area) {
   const known = new Set(passes.map((p) => `${p.lon},${p.lat}`));
   passes.push(...area.passes.filter((p) => !known.has(`${p.lon},${p.lat}`)));
   rescore();
+  ridden = riddenRoads(roads, rides);
 }
 
 function removeArea(key) {
   roads = roads.filter((r) => r.area !== key);
   areas = areas.filter((a) => a.key !== key);
-  areasDB("delete", key).catch(() => {});
+  idb("areas", "delete", key).catch(() => {});
   rescore();
   refreshMapData();
   renderAreas();
@@ -71,27 +80,11 @@ function removeArea(key) {
 
 function rescore() {
   for (const r of roads) {
-    r.fx = scoreRoad(r, state.taste);      // score + best stretch + hot spots, for this taste
+    r.fx = scoreRoad(r, state.taste, currentMix());   // score + best stretch + hot spots, for your taste
     r.score = r.fx.score;
     r.scenery = r.fx.scenery.score;
   }
   byId = new Map(roads.map((r) => [r.id, r]));
-}
-
-/** Tiny IndexedDB wrapper for saved scans (they're too big for localStorage). */
-function areasDB(op, arg) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("twisty-roads", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("areas", { keyPath: "key" });
-    req.onerror = () => reject(req.error);
-    req.onsuccess = () => {
-      const tx = req.result.transaction("areas", op === "getAll" ? "readonly" : "readwrite");
-      const st = tx.objectStore("areas");
-      const r = op === "getAll" ? st.getAll() : op === "put" ? st.put(arg) : st.delete(arg);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    };
-  });
 }
 
 // ------------------------------------------------------------------ geometry helpers
@@ -288,6 +281,12 @@ mapReady.then(() => {
     "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.85,
   });
 
+  map.addSource("rides", { type: "geojson", data: ridesGeoJSON() });
+  map.addLayer({
+    id: "rides", type: "line", source: "rides",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#2b6cb0", "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1.5, 14, 4], "line-opacity": 0.55 },
+  }, firstSymbol);
   map.addSource("roads", { type: "geojson", data: roadsGeoJSON() });
   // zoom must be the outermost interpolation; per-road score scales the width inside each stop
   const scoreWidth = ["interpolate", ["linear"], ["get", "score"], 0, 1, 100, 2.2];
@@ -451,7 +450,7 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
       roads: msg.roads, passes: msg.passes,
     };
     addArea(area);
-    areasDB("put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, ...r }) => r) }).catch(() => {});
+    idb("areas", "put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, ...r }) => r) }).catch(() => {});
     refreshMapData();
     renderAreas();
 
@@ -538,9 +537,19 @@ renderAreas();
 
 function matchingRoads() {
   const q = state.query.trim().toLowerCase();
+  const show = {
+    all: () => true, fav: (r) => isFav(r.id), unridden: (r) => !ridden.has(r.id),
+    ridden: (r) => ridden.has(r.id), rated: (r) => ratingOf(r.id) !== 0,
+  }[state.show];
   return roads.filter((r) =>
-    (!state.passesOnly || r.pass) &&
+    (!state.passesOnly || r.pass) && show(r) &&
     (!q || [r.name, r.road, r.from, r.to, r.pass?.name].some((s) => s && s.toLowerCase().includes(q))));
+}
+
+/** ★ favourite, ✓ ridden, 👍/👎 your rating */
+function marks(r) {
+  const m = [isFav(r.id) && "★", ridden.has(r.id) && "✓", ratingOf(r.id) > 0 && "👍", ratingOf(r.id) < 0 && "👎"].filter(Boolean);
+  return m.length ? ` <span class="marks">${m.join(" ")}</span>` : "";
 }
 
 function inViewport(r) {
@@ -567,7 +576,7 @@ function renderList() {
   $("#list").innerHTML = list.slice(0, 300).map((r, i) => `
     <li class="item${state.sel?.id === r.id ? " active" : ""}" data-id="${r.id}">
       <span class="rank">${i + 1}</span>
-      <span class="name">${esc(r.name)}</span>
+      <span class="name">${esc(r.name)}${marks(r)}</span>
       <span class="meta">${esc([r.road, route(r.from, r.to)].filter(Boolean).join(" · ") || " ")}</span>
       <span class="nums">
         <span class="bar" title="Fun score ${r.score}"><b style="width:${Math.min(100, r.score)}%"></b></span><span class="score">${r.score}</span>
@@ -586,6 +595,7 @@ function route(a, b) {
 $("#search").addEventListener("input", (e) => { state.query = e.target.value; applyFilter(); });
 $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; renderList(); });
 $("#passesOnly").addEventListener("change", (e) => { state.passesOnly = e.target.checked; applyFilter(); });
+$("#show").addEventListener("change", (e) => { state.show = e.target.value; applyFilter(); });
 $("#inView").addEventListener("change", (e) => { state.inView = e.target.checked; renderList(); });
 
 const tasteEl = $("#taste");
@@ -596,15 +606,53 @@ tasteEl.addEventListener("input", () => {
   store.set("taste", state.taste);
   $("#tasteLabel").textContent = tasteLabel();
   clearTimeout(tasteTimer);
-  tasteTimer = setTimeout(() => {
-    rescore();
-    map.getSource("roads")?.setData(roadsGeoJSON());
-    renderList();
-    if (state.sel) { renderDetail(); renderHot(); drawProfile(); }
-  }, 120);
+  tasteTimer = setTimeout(applyScoring, 120);
 });
 const tasteLabel = () => (state.taste < 0.35 ? "Fast sweepers" : state.taste > 0.65 ? "Tight hairpins" : "A bit of everything");
 $("#tasteLabel").textContent = tasteLabel();
+
+/** Re-score everything after the taste or learned weights change, and refresh what's on screen. */
+function applyScoring() {
+  rescore();
+  map.getSource("roads")?.setData(roadsGeoJSON());
+  renderList();
+  if (state.sel) { renderDetail(); renderHot(); drawProfile(); }
+}
+
+function setTaste(t) {
+  state.taste = t;
+  tasteEl.value = Math.round(t * 100);
+  store.set("taste", t);
+  $("#tasteLabel").textContent = tasteLabel();
+}
+
+/** The "teach it your taste" line under the slider. */
+function renderTune() {
+  const vals = Object.values(me.rate), yays = vals.filter((v) => v > 0).length, nays = vals.filter((v) => v < 0).length;
+  const el = $("#tune");
+  if (me.tuned) {
+    const t = me.tuned;
+    el.innerHTML = `<b>Tuned to your ${t.yays + t.nays} ratings</b> (${t.agree} of ${t.pairs} comparisons agree): ${esc(describeMix(t.mix))}.
+      <button class="link" id="tuneReset">Reset</button>`;
+  } else if (yays >= 2 && nays >= 2) {
+    el.innerHTML = `<button class="btn small" id="tuneLearn">Learn my taste from ${yays + nays} ratings</button>`;
+  } else {
+    el.innerHTML = `Rate roads 👍 / 👎 to teach it your taste: ${yays} of 2 yays, ${nays} of 2 nays so far.`;
+  }
+}
+function learnAndApply() {
+  const t = learnTaste(byId);
+  if (!t) return;
+  setTuned(t);
+  setTaste(t.taste);
+  applyScoring();
+  renderTune();
+}
+$("#tune").addEventListener("click", (e) => {
+  if (e.target.id === "tuneLearn") learnAndApply();
+  if (e.target.id === "tuneReset") { setTuned(null); applyScoring(); renderTune(); }
+});
+renderTune();
 
 const listEl = $("#list");
 listEl.addEventListener("click", (e) => {
@@ -643,6 +691,7 @@ function select(road, reversed = false) {
 
   renderDetail();
   loadWeather(road);
+  loadStops(road);
 
   const at = (f) => v.at(v.total * f);
   const pt = (p) => `${p[1].toFixed(5)},${p[0].toFixed(5)}`;
@@ -656,7 +705,7 @@ function select(road, reversed = false) {
   listEl.querySelector(`[data-id="${road.id}"]`)?.classList.add("active");
   if (innerWidth <= 760) scrollTo({ top: 0, behavior: "smooth" });   // phone: the map is above the list
   else listEl.querySelector(`[data-id="${road.id}"]`)?.scrollIntoView({ block: "nearest" });
-  history.replaceState(null, "", `#road=${road.id}`);
+  history.replaceState(null, "", roadLink(road).slice(roadLink(road).indexOf("#")));
 
   if (!reversed) {
     const narrow = innerWidth <= 760;
@@ -761,6 +810,7 @@ function renderDetail() {
   ].filter(Boolean);
   $("#dWarn").innerHTML = warns.map(([t, title]) => `<span class="badge" title="${esc(title)}">${esc(t)}</span>`).join("");
   $("#dWarn").hidden = !warns.length;
+  renderPersonal();
 }
 
 function deselect() {
@@ -770,6 +820,7 @@ function deselect() {
   map.getSource("sel-runs").setData(emptyFC);
   map.getSource("hot").setData(emptyFC);
   peakMarker.remove();
+  clearStops();
   map.setPaintProperty("roads", "line-opacity", 1);
   map.setPaintProperty("roads-casing", "line-opacity", 0.9);
   $("#detail").hidden = true;
@@ -802,6 +853,182 @@ ${pts}
   a.click();
   URL.revokeObjectURL(a.href);
 });
+
+// ------------------------------------------------------------------ your roads: favourites, ratings, links
+
+/** Link that opens this road for anyone: roads from a scan carry the scan, so the recipient's browser re-runs it. */
+function roadLink(road) {
+  const base = location.origin + location.pathname;
+  return road.area && road.area !== "home" ? `${base}#scan=${road.area}&road=${road.id}` : `${base}#road=${road.id}`;
+}
+
+function renderPersonal() {
+  const r = state.sel;
+  if (!r) return;
+  const fav = isFav(r.id), rt = ratingOf(r.id);
+  $("#fav").textContent = fav ? "★" : "☆";
+  $("#fav").classList.toggle("on", fav);
+  $("#fav").title = fav ? "Remove from favourites" : "Add to favourites";
+  $("#yay").classList.toggle("on", rt > 0);
+  $("#nay").classList.toggle("on", rt < 0);
+  $("#dRidden").hidden = !ridden.has(r.id);
+}
+
+function afterPersonalChange() {
+  renderPersonal();
+  renderList();
+  renderTune();
+}
+$("#fav").addEventListener("click", () => { toggleFav(state.sel.id); afterPersonalChange(); });
+for (const [id, v] of [["#yay", 1], ["#nay", -1]]) {
+  $(id).addEventListener("click", () => {
+    rate(state.sel.id, v);
+    if (me.tuned) {                        // keep a learned taste up to date as you rate more
+      if (learnTaste(byId)) learnAndApply(); else { setTuned(null); applyScoring(); }
+    }
+    afterPersonalChange();
+  });
+}
+
+// ------------------------------------------------------------------ stops along the road
+
+let stopMarkers = [];
+function clearStops() {
+  stopMarkers.forEach((m) => m.remove());
+  stopMarkers = [];
+}
+
+async function loadStops(road) {
+  clearStops();
+  const el = $("#dStops");
+  el.hidden = false;
+  el.innerHTML = `<span class="muted">Looking for cafés, food and fuel along the road…</span>`;
+  let stops;
+  try {
+    stops = await findStops(road);
+  } catch {
+    if (state.sel === road) el.innerHTML = `<span class="muted">Couldn't load stops right now (map servers busy).</span> <button class="link" id="stopsRetry">Try again</button>`;
+    return;
+  }
+  if (state.sel !== road) return;
+  if (!stops.length) { el.innerHTML = `<span class="muted">No cafés, food or fuel mapped within 200 m of this road.</span>`; return; }
+  const v = state.view;
+  const withKm = stops.map((st) => ({ ...st, d: v.nearest(st.lon, st.lat) })).sort((a, b) => a.d - b.d);
+  el.innerHTML = `<span class="stops-label">Stops</span>` + withKm.slice(0, 12).map((st, i) =>
+    `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}">${st.icon} ${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("");
+  el._stops = withKm;
+  stopMarkers = withKm.map((st) => new maplibregl.Marker({
+    element: Object.assign(document.createElement("div"), { className: "stop-pin", textContent: st.icon, title: st.name || st.kind }),
+  }).setLngLat([st.lon, st.lat]).addTo(map));
+}
+$("#dStops").addEventListener("click", (e) => {
+  if (e.target.id === "stopsRetry") return loadStops(state.sel);
+  const b = e.target.closest(".stop");
+  if (!b) return;
+  const st = $("#dStops")._stops[+b.dataset.i];
+  map.easeTo({ center: [st.lon, st.lat], zoom: Math.max(map.getZoom(), 15), duration: 800 });
+});
+
+// ------------------------------------------------------------------ share
+
+$("#share").addEventListener("click", async () => {
+  const r = state.sel, v = state.view, fx = r.fx, btn = $("#share");
+  btn.disabled = true;
+  btn.textContent = "Making image…";
+  let msg = "Share";
+  try {
+    const p = fx.parts;
+    const profile = Array.from({ length: 120 }, (_, i) => { const d = (v.total * i) / 119; return [d, v.at(d)[2]]; });
+    const blob = await makeCard(map, r, {
+      name: r.name,
+      sub: [r.road, route(v.from, v.to)].filter(Boolean).join(" · "),
+      score: r.score,
+      factors: `${p.bends.toFixed(1)} bends × (1 + ${(p.terrain - 1).toFixed(2)} terrain + ${(p.scenery - 1).toFixed(2)} scenery + ${(p.hairpins - 1).toFixed(2)} hairpins)`,
+      stats: [["Length", `${km(r.len)} km`], ["Hairpins", String(r.hairpins)], ["Climb", `↑${fmt(v.climb)} m`], ["Top", `${fmt(r.eleMax)} m`]],
+      profile,
+    });
+    const res = await share(blob, `${r.name.replace(/[^\w\-]+/g, "_").toLowerCase()}.png`, `${r.name} · fun ${r.score}`, roadLink(r));
+    msg = { shared: "Shared ✓", cancelled: "Share", "saved+copied": "Image saved, link copied ✓", saved: "Image saved ✓" }[res];
+  } catch {
+    msg = "Couldn't make the image";
+  }
+  btn.textContent = msg;
+  btn.disabled = false;
+  setTimeout(() => { btn.textContent = "Share"; }, 3000);
+});
+
+// ------------------------------------------------------------------ your rides (GPX)
+
+function ridesGeoJSON() {
+  return { type: "FeatureCollection", features: rides.map((r) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r.points } })) };
+}
+
+function renderRides() {
+  const n = [...ridden].filter((id) => byId.has(id)).length;
+  $("#ridesInfo").textContent = rides.length
+    ? `${rides.length} ride${rides.length > 1 ? "s" : ""} · ${n} scored road${n === 1 ? "" : "s"} ridden`
+    : "or drop GPX files anywhere on the page";
+  const el = $("#rideChips");
+  el.hidden = !rides.length;
+  el.innerHTML = rides.map((r) => `<span class="area-chip" data-key="${esc(r.key)}">
+      <button class="area-go" title="Show on map">${esc(r.name)}</button>
+      <button class="area-x" title="Remove this ride" aria-label="Remove ${esc(r.name)}">✕</button></span>`).join("");
+}
+
+function ridesChanged() {
+  ridden = riddenRoads(roads, rides);
+  map.getSource("rides")?.setData(ridesGeoJSON());
+  renderRides();
+  renderList();
+  renderPersonal();
+}
+
+const fitPoints = (pts) => {
+  const lo = pts.map((p) => p[0]), la = pts.map((p) => p[1]);
+  map.fitBounds([[Math.min(...lo), Math.min(...la)], [Math.max(...lo), Math.max(...la)]], { padding: 60, duration: 1000 });
+};
+
+async function importFiles(files) {
+  const added = [], errors = [];
+  for (const f of files) {
+    if (!/\.gpx$/i.test(f.name)) { errors.push(`${f.name} isn't a .gpx file`); continue; }
+    try { added.push(await addRide(parseGPX(await f.text(), f.name))); } catch (e) { errors.push(e.message); }
+  }
+  rides = [...rides, ...added];
+  ridesChanged();
+  if (errors.length) $("#ridesInfo").textContent = errors.join(" · ");
+  if (added.length) fitPoints(added.flatMap((r) => r.points));
+}
+
+$("#ridesBtn").addEventListener("click", () => $("#gpxFile").click());
+$("#gpxFile").addEventListener("change", (e) => { importFiles([...e.target.files]); e.target.value = ""; });
+$("#rideChips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".area-chip");
+  if (!chip) return;
+  const ride = rides.find((r) => r.key === chip.dataset.key);
+  if (e.target.closest(".area-x")) {
+    removeRide(ride.key).catch(() => {});
+    rides = rides.filter((r) => r !== ride);
+    ridesChanged();
+    return;
+  }
+  fitPoints(ride.points);
+});
+
+// drag and drop GPX files anywhere on the page
+let dragDepth = 0;
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+addEventListener("dragenter", (e) => { if (hasFiles(e)) { dragDepth++; $("#drop").hidden = false; } });
+addEventListener("dragleave", (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; $("#drop").hidden = true; } });
+addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("drop", (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  $("#drop").hidden = true;
+  importFiles([...e.dataTransfer.files]);
+});
+renderRides();
 
 // ------------------------------------------------------------------ weather at the top
 

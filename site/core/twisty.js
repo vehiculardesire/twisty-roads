@@ -60,13 +60,17 @@ export const SCORE_REF = 32.2;           // raw fun that scores 100; the Stelvio
  * by how a typical great pass (this bend mix over 15 km, 20 hairpins) scores at that taste versus balanced.
  */
 const TYPICAL_PASS = { bends: [3.0, 3.0, 2.5, 1.5], hairpins: 20, terrain: 0.35, scenery: 0.3 };
-function tasteScale(taste) {
-  const raw = (t) => {
+function tasteScale(taste, mix = NO_MIX) {
+  const raw = (t, m) => {
     const w = tasteWeights(t), p = TYPICAL_PASS;
-    return p.bends.reduce((s, km, i) => s + km * w.bends[i], 0) * (hairpinFactor(p.hairpins, w.hairpinBonus) + p.terrain + p.scenery);
+    return p.bends.reduce((s, km, i) => s + km * w.bends[i], 0) *
+      (1 + m.hairpins * (hairpinFactor(p.hairpins, w.hairpinBonus) - 1) + m.terrain * p.terrain + m.scenery * p.scenery);
   };
-  return raw(taste) / raw(0.5);
+  return raw(taste, mix) / raw(0.5, NO_MIX);
 }
+
+/** How much each bonus counts for this rider; 1 = as designed. Learned from their yay/nay ratings in the UI. */
+export const NO_MIX = Object.freeze({ terrain: 1, scenery: 1, hairpins: 1 });
 
 /** x1.5 at 20 hairpins (balanced), then diminishing returns up to 60 so Stelvio-style stacks still count. */
 function hairpinFactor(h, bonus) {
@@ -135,7 +139,7 @@ const sliceScenery = (b, alpine) => Math.min(1, 0.65 * b.v + 0.35 * b.p + (b.x ?
  * (6 km x0.63, 15 km x1, 30 km x1.41). Meh stretches neither help nor hurt.
  * Linear 0-100, where 100 is the world's benchmark roads; anything even better also shows 100.
  */
-export function scoreRoad(road, taste = 0.5) {
+export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
   const { bins, ele } = decode(road);
   const w = tasteWeights(taste), nb = bins.length, binKm = BIN / 1000;
   const bend = bins.map((b) => b.c.reduce((s, n, k) => s + n * (STEP / 1000) * w.bends[k], 0) * (1 - (1 - BUILT_UP_KEEP) * b.u));
@@ -156,9 +160,9 @@ export function scoreRoad(road, taste = 0.5) {
     const rolling = Math.min(1, sum(pR, i, i + W) / (W * binKm) / 1.5) * 0.6;
     const parts = {
       bends: sum(pB, i, i + W),
-      terrain: 1 + 0.5 * Math.max(climb, rolling),
-      scenery: 1 + 0.5 * (sum(pS, i, i + W) / W),
-      hairpins: hairpinFactor(sum(pH, i, i + W), w.hairpinBonus),
+      terrain: 1 + mix.terrain * 0.5 * Math.max(climb, rolling),
+      scenery: 1 + mix.scenery * 0.5 * (sum(pS, i, i + W) / W),
+      hairpins: 1 + mix.hairpins * (hairpinFactor(sum(pH, i, i + W), w.hairpinBonus) - 1),
     };
     const fun = parts.bends * (parts.terrain + parts.scenery + parts.hairpins - 2);
     if (!best || fun > best.fun) best = { fun, i, parts, rolling: rolling > climb };
@@ -173,7 +177,7 @@ export function scoreRoad(road, taste = 0.5) {
   const goodKm = dens.filter((d) => d >= 0.5 * winMean).length * binKm;
   const lengthF = Math.sqrt(Math.min(goodKm, GOOD_KM_CAP) / WINDOW_KM);
   const intensity = best.fun / (W * binKm);
-  const linear = (100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste));
+  const linear = (100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste, mix));
   const score = Math.round(Math.min(100, linear));
 
   // hot spots: stretches within 70% of the road's most intense kilometre, at least 400 m long

@@ -35,12 +35,22 @@
         <div id="areas" class="areas" hidden></div>
       </form>
 
+      <div class="rides">
+        <div class="row">
+          <button id="ridesBtn" class="btn" type="button" title="Import rides recorded on your phone or bike computer">Import your rides (GPX)</button>
+          <span id="ridesInfo" class="rides-info"></span>
+        </div>
+        <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml" multiple hidden>
+        <div id="rideChips" class="areas" hidden></div>
+      </div>
+
       <div class="controls">
         <label class="taste">
           <span class="taste-head">Your taste <b id="tasteLabel"></b></span>
           <input id="taste" type="range" min="0" max="100" step="5" value="50" aria-label="Taste, from fast sweepers to tight hairpins">
           <span class="taste-ends"><span>Sweepers</span><span>Hairpins</span></span>
         </label>
+        <div id="tune" class="tune"></div>
         <input id="search" type="search" placeholder="Filter by road, pass or town" autocomplete="off" aria-label="Filter roads">
         <div class="row">
           <label class="select">
@@ -58,6 +68,16 @@
           <label class="chip"><input id="inView" type="checkbox" checked> In view</label>
           <label class="chip"><input id="passesOnly" type="checkbox"> Passes</label>
         </div>
+        <label class="select">
+          <span>Show</span>
+          <select id="show">
+            <option value="all">All roads</option>
+            <option value="fav">★ Favourites</option>
+            <option value="unridden">Not ridden yet</option>
+            <option value="ridden">✓ Ridden</option>
+            <option value="rated">Rated by you</option>
+          </select>
+        </label>
       </div>
 
       <p id="count" class="count"></p>
@@ -89,14 +109,20 @@
       <section id="detail" class="detail" hidden>
         <div class="detail-head">
           <div>
-            <h2 id="dName"></h2>
+            <h2><span id="dName"></span> <span id="dRidden" class="ridden-badge" hidden title="You've ridden this (from your imported rides)">✓ ridden</span></h2>
             <p id="dSub" class="sub"></p>
           </div>
           <div class="actions">
+            <button id="fav" class="btn icon" title="Add to favourites">☆</button>
+            <span class="rate">
+              <button id="yay" class="btn icon" title="Yay: I like this road">👍</button>
+              <button id="nay" class="btn icon" title="Nay: not for me">👎</button>
+            </span>
             <button id="fly" class="btn primary">▶ Fly along</button>
             <button id="reverse" class="btn" title="Ride it the other way">⇄</button>
             <a id="nav" class="btn" target="_blank" rel="noopener">Navigate</a>
             <button id="gpx" class="btn">GPX</button>
+            <button id="share" class="btn" title="Share as an image and a link">Share</button>
             <button id="close" class="btn icon" aria-label="Close">✕</button>
           </div>
         </div>
@@ -106,6 +132,7 @@
           <div id="dWeather" class="weather"></div>
         </div>
         <div id="dWarn" class="warn" hidden></div>
+        <div id="dStops" class="stops" hidden></div>
         <div class="profile-wrap">
           <canvas id="profile"></canvas>
           <div id="pTip" class="ptip" hidden></div>
@@ -120,6 +147,8 @@
       </section>
     </main>
   </div>
+
+  <div id="drop" class="drop" hidden><div>Drop GPX files to import your rides</div></div>
 
   <dialog id="about" class="about">
     <button class="about-close btn icon" aria-label="Close">✕</button>

@@ -40,6 +40,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* components set display; `hidden` must still win */
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg);
@@ -107,6 +108,19 @@ button, input, select { font: inherit; color: inherit; }
 
 .count { margin: 8px 20px 4px; color: var(--muted); font-size: 12px; }
 
+/* your rides */
+.rides { margin: 8px 20px 0; display: grid; gap: 6px; }
+.rides .btn { padding: 5px 10px; font-size: 13px; }
+.rides-info { color: var(--muted); font-size: 12px; }
+
+/* taste learning */
+.tune { font-size: 12px; color: var(--ink-2); }
+.tune b { color: var(--ink); }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+
+/* list badges */
+.marks { color: var(--accent); font-weight: 400; font-size: 12px; margin-left: 4px; letter-spacing: 1px; }
+
 .list { list-style: none; margin: 0; padding: 0 12px 12px; overflow-y: auto; flex: 1; min-height: 0; }
 .item {
   display: grid; grid-template-columns: 34px 1fr; gap: 2px 8px;
@@ -173,6 +187,39 @@ button, input, select { font: inherit; color: inherit; }
 .btn:hover { border-color: var(--muted); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .btn.icon { padding: 6px 10px; }
+.btn.icon.on { background: var(--surface-2); border-color: var(--accent); }
+#fav.on { color: var(--accent); }
+.btn:disabled { opacity: 0.7; cursor: progress; }
+.rate { display: inline-flex; gap: 2px; }
+.ridden-badge {
+  font-size: 12px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 1px 8px; vertical-align: 3px;
+}
+
+/* stops along the road */
+.stops { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 12px; }
+.stops .muted { color: var(--muted); }
+.stops-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }
+.stop {
+  border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 2px 9px; cursor: pointer;
+  font-size: 12px; white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+}
+.stop:hover { border-color: var(--muted); }
+.stop small { color: var(--muted); }
+.stop-pin {
+  font-size: 15px; line-height: 1; padding: 3px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); cursor: default;
+}
+
+/* drag-and-drop overlay for GPX files */
+.drop {
+  position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; pointer-events: none;
+  background: rgba(0, 0, 0, 0.45);
+}
+.drop div {
+  padding: 28px 40px; border-radius: 16px; border: 2px dashed var(--accent); background: var(--surface);
+  color: var(--ink); font-size: 18px; font-weight: 600;
+}
 
 .detail-body { display: grid; grid-template-columns: minmax(250px, 1.1fr) minmax(220px, 1fr) minmax(250px, 1.1fr); gap: 18px; margin: 12px 0 8px; }
 .detail-body > * { min-width: 0; }
@@ -255,6 +302,7 @@ button, input, select { font: inherit; color: inherit; }
   .controls { padding: 10px 16px 4px; }
   .count { margin: 8px 16px 4px; }
   .explore { margin: 10px 16px 0; }
+  .rides { margin: 8px 16px 0; }
   .list { padding: 0 8px 12px; overflow: visible; }
   .credits { padding: 10px 16px 14px; }
   .legend { display: none; }

@@ -16,11 +16,24 @@ Static site, no backend, no API keys: it runs on GitHub Pages.
 - **Taste slider**: from fast sweepers to tight hairpins; re-ranks everything.
 - **Selected road**: drawn as a smooth curve through the OSM points and re-measured every 10 m, with weather at
   its highest point (Open-Meteo) and warnings for narrow stretches, tolls, tunnels and seasonal closures.
+- **Your roads** (all kept in your browser, nothing uploaded):
+  - *Favourites* (☆).
+  - *Your rides:* import GPX files (button or drag and drop). A road counts as ridden when 60% of it is within
+    35 m of a track, and you can filter by "Not ridden yet".
+  - *Yay / nay ratings:* after 2 of each, "Learn my taste" searches taste × how much terrain, scenery and hairpins
+    count (×0.5 / ×1 / ×1.5) for the settings that rank your yays above your nays, staying close to the defaults.
+- **Stops**: cafés, food, mountain huts and fuel within 200 m of the selected road (one Overpass query per road).
+- **Share**: an image card (map, score, breakdown, profile, credits) plus a link. Roads from a scan link with the
+  scan, so the recipient's browser re-runs it.
+- **Rotate around the cursor**: right-drag or Ctrl+drag pivots on the point you grab.
 
 ```
 site/                 the app (plain HTML/JS, MapLibre GL from a CDN, no build step)
 site/core/twisty.js   the engine: OSM + terrain -> scored road sections (browser and Node)
 site/scan-worker.js   runs the engine in the browser
+site/personal.js      favourites, ratings, taste learning       site/rides.js   GPX import and ridden matching
+site/stops.js         cafés, food, fuel along a road            site/share.js   the share card
+site/db.js            browser storage for scans and rides
 tools/                Node script that pre-builds the built-in region (tools/region.json)
 ```
 

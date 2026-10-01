@@ -1,5 +1,5 @@
 /* Places to stop along a road: cafés, food, huts and fuel within 200 m, from OpenStreetMap (one query per road). */
-import { OVERPASS } from "./core/twisty.js";
+import { overpassServers } from "./core/twisty.js";
 
 const KINDS = [
   ["cafe", "☕", "Café"], ["restaurant", "🍽", "Restaurant"], ["fast_food", "🍔", "Snack"], ["ice_cream", "🍦", "Ice cream"],
@@ -20,9 +20,10 @@ export async function findStops(road) {
 );
 out center 80;`;
   let data = null;
-  for (let attempt = 0; attempt < OVERPASS.length && !data; attempt++) {
+  const servers = await overpassServers();
+  for (let attempt = 0; attempt < servers.length && !data; attempt++) {
     try {
-      const r = await fetch(OVERPASS[attempt], { method: "POST", body: new URLSearchParams({ data: q }), signal: AbortSignal.timeout(60000) });
+      const r = await fetch(servers[attempt], { method: "POST", body: new URLSearchParams({ data: q }), signal: AbortSignal.timeout(60000) });
       if (r.ok) data = await r.json();
     } catch { /* next server */ }
   }

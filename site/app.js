@@ -494,14 +494,15 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
     renderAreas();
 
     const best = [...msg.roads].sort((a, b) => b.score - a.score)[0];
-    setScanUI(false, msg.roads.length
+    const gaps = msg.missing ? ` ${msg.missing} piece${msg.missing > 1 ? "s" : ""} of the area couldn't be downloaded (busy map servers): scan again later to fill ${msg.missing > 1 ? "them" : "it"} in.` : "";
+    setScanUI(false, (msg.roads.length
       ? `Found ${msg.roads.length} twisty roads around ${area.label}. Best: ${best.name} (${best.score}).`
-      : "No twisty paved roads found here. Try a bigger radius or a hillier area.");
+      : "No twisty paved roads found here. Try a bigger radius or a hillier area.") + gaps);
     history.replaceState(null, "", `#scan=${lat.toFixed(3)},${lon.toFixed(3)},${radiusKm}`);
     if (selectId && byId.has(selectId)) select(byId.get(selectId));
   };
   worker.onerror = (e) => { scanning = false; worker.terminate(); setScanUI(false, `Scan failed: ${e.message}`, true); };
-  worker.postMessage({ bbox });
+  worker.postMessage({ bbox, maxRoads: radiusKm > 60 ? 1000 : radiusKm > 30 ? 700 : 400 });
 }
 
 function showScanBox(bbox) {

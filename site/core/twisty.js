@@ -12,9 +12,9 @@ export const ALGO_VERSION = 3;          // bump when output changes: saved scans
 
 export const TERRAIN_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
 export const OVERPASS = [
-  "https://overpass-api.de/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
 ];
 
 const R_EARTH = 6371008.8;
@@ -212,6 +212,28 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
 
 // ------------------------------------------------------------------ download
 
+let ranked = null, rankedAt = 0;
+
+/** The Overpass servers that are answering right now, quickest first. Which one is busy changes by the hour, so a
+ *  scan starts by sending each a trivial query. A server that doesn't answer it tends to hang on real queries too,
+ *  so it's left out (unless none answer). Remembered for 5 minutes. */
+export async function overpassServers(headers = {}, fresh = false) {
+  if (ranked && !fresh && Date.now() - rankedAt < 300000) return ranked;
+  const probe = new URLSearchParams({ data: "[out:json][timeout:10];node(1);out ids;" });
+  const times = await Promise.all(OVERPASS.map(async (url, i) => {
+    const t = Date.now();
+    try {
+      const r = await fetch(url, { method: "POST", body: probe, headers, signal: AbortSignal.timeout(12000) });
+      if (r.ok) { await r.text(); return [Date.now() - t, i]; }
+    } catch { /* no answer */ }
+    return [1e9 + i, i];
+  }));
+  const up = times.filter(([t]) => t < 1e9);
+  ranked = (up.length ? up : times).sort((a, b) => a[0] - b[0]).map(([, i]) => OVERPASS[i]);
+  rankedAt = Date.now();
+  return ranked;
+}
+
 /** Roads, passes and place names in a bbox [south, west, north, east], from the public Overpass servers. */
 export async function fetchOverpass(bbox, { onProgress = () => {}, attempts = 9, headers = {} } = {}) {
   const [s, w, n, e] = bbox.map((v) => v.toFixed(4));
@@ -223,15 +245,21 @@ export async function fetchOverpass(bbox, { onProgress = () => {}, attempts = 9,
   node["place"~"^(city|town|village)$"](${s},${w},${n},${e});
 );
 out body geom qt;`;
+  let servers = await overpassServers(headers);
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const url = OVERPASS[attempt % OVERPASS.length];
-    onProgress(attempt ? `Map server busy, trying ${new URL(url).host}…` : "Downloading roads from OpenStreetMap…");
+    // after a full round of failures, ask again which servers are answering
+    if (attempt && attempt % servers.length === 0) servers = await overpassServers(headers, true);
+    const url = servers[attempt % servers.length];
+    onProgress(attempt ? `Map server busy, retrying${servers.length > 1 ? ` on ${new URL(url).host}` : ""}…` : "Downloading roads from OpenStreetMap…");
+    // a server that's queueing us sends nothing at all: give up on it after 2 minutes, but let a download finish
+    const stop = new AbortController();
+    let timer = setTimeout(() => stop.abort(), 120000);
     try {
-      const r = await fetch(url, {
-        method: "POST", body: new URLSearchParams({ data: q }), headers, signal: AbortSignal.timeout(200000),
-      });
+      const r = await fetch(url, { method: "POST", body: new URLSearchParams({ data: q }), headers, signal: stop.signal });
+      clearTimeout(timer);
+      timer = setTimeout(() => stop.abort(), 180000);
       if (r.ok) return (await r.json()).elements;
-    } catch { /* timeout / network: next server */ }
+    } catch { /* timeout / network: next server */ } finally { clearTimeout(timer); }
     await sleep(Math.min(30, 4 * (attempt + 1)) * 1000);
   }
   throw new Error("The OpenStreetMap servers are busy right now. Try again in a minute.");

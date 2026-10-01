@@ -549,6 +549,12 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
       label: label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`, radius: radiusKm, bbox,
       roads: msg.roads, passes: msg.passes,
     };
+    // a bigger scan around the same place replaces the smaller ones it covers
+    const covers = ([s, w, n, e], [s2, w2, n2, e2]) => s <= s2 + 1e-6 && w <= w2 + 1e-6 && n >= n2 - 1e-6 && e >= e2 - 1e-6;
+    for (const old of areas.filter((a) => a.key !== area.key && covers(bbox, a.bbox))) {
+      areas = areas.filter((a) => a !== old);
+      idb("areas", "delete", old.key).catch(() => {});
+    }
     addArea(area);
     idb("areas", "put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, line: _l, scoredFor: _k, ...r }) => r) }).catch(() => {});
     refreshMapData();

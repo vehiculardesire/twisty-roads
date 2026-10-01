@@ -215,7 +215,7 @@ details.more summary small { color: var(--muted); font-weight: 400; margin-left:
 .actions.icons { margin-top: 8px; }
 .actions .gap { flex: 1; }
 
-.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 14px; margin: 18px 20px 0; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; margin: 18px 20px 0; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .stats div { display: flex; flex-direction: column; min-width: 0; }
 .stats dt { color: var(--muted); font-size: var(--t-xs); }
 .stats dd { margin: 2px 0 0; font-size: var(--t-md); font-weight: 500; white-space: nowrap; }
@@ -281,6 +281,8 @@ details.more summary small { color: var(--muted); font-weight: 400; margin-left:
 .legend .ramp { width: 160px; height: 6px; border-radius: 3px; margin: 6px 0 4px; }
 .legend .ends { display: flex; justify-content: space-between; color: var(--muted); }
 .legend .keys { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+.legend i.ph, .legend i.ph-fill { width: auto; height: auto; margin-right: 4px; background: none; border-radius: 0; font-size: 14px; vertical-align: -2px; }
+.legend .keys span { display: inline-flex; align-items: center; }
 .legend i.glow { background: var(--accent); opacity: .5; height: 8px; border-radius: 4px; filter: blur(1px); }
 .legend .star { color: var(--accent); }
 
@@ -336,5 +338,4 @@ details.more summary small { color: var(--muted); font-weight: 400; margin-left:
   .legend { display: none; }
   .map-tools { top: 8px; left: 8px; gap: 6px; }
   .exag { display: none; }
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -419,19 +419,19 @@ function addLayers() {
   map.addLayer({
     id: "hot-glow", type: "line", source: "hot",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": css("--accent"), "line-width": width(11), "line-opacity": 0.45, "line-blur": 3 },
+    paint: { "line-color": css("--accent"), "line-width": selWidth(SEL_GLOW), "line-opacity": 0.35, "line-blur": selWidth(SEL_BLUR) },
   });
   map.addLayer({
     id: "sel-casing", type: "line", source: "sel",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": css("--sel-casing"), "line-width": width(5) },
+    paint: { "line-color": css("--sel-casing"), "line-width": selWidth(SEL_CASING) },
   });
   map.addLayer({
     id: "sel-line", type: "line", source: "sel-runs",
     layout: { "line-cap": "round", "line-join": "round" },
     paint: {
       "line-color": ["match", ["get", "c"], 1, css("--c1"), 2, css("--c2"), 3, css("--c3"), 4, css("--c4"), css("--c0")],
-      "line-width": width(3.2),
+      "line-width": selWidth(SEL_LINE),
     },
   });
 
@@ -459,6 +459,14 @@ function addLayers() {
     paint: { "circle-radius": 3.5, "circle-color": css("--label"), "circle-stroke-color": css("--casing"), "circle-stroke-width": 1.5 },
   }, "passes");
 }
+
+// The selected road has its own widths: thin from afar, so stacked hairpins don't merge into a blob, wider up close.
+// [zoom, px] pairs for the line, its casing, and the hot-spot glow.
+const SEL_LINE = [[8, 1.5], [11, 2], [13, 3], [15, 5], [17, 9]];
+const SEL_CASING = [[8, 2.5], [11, 3.5], [13, 5], [15, 8], [17, 13]];
+const SEL_GLOW = [[8, 4], [11, 6], [13, 9], [15, 16], [17, 26]];
+const SEL_BLUR = [[8, 2], [11, 3], [13, 4], [15, 6], [17, 9]];
+const selWidth = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
 
 const scoreRamp = () => ["interpolate", ["linear"], ["get", "score"], 0, css("--s1"), 35, css("--s2"), 65, css("--s3"), 100, css("--s4")];
 

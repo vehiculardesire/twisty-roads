@@ -120,6 +120,7 @@ function rescore() {
     r.fx = scoreRoad(r, state.taste, mix);   // score + best stretch + hot spots, for your taste
     r.score = r.fx.score;
     r.scenery = r.fx.scenery.score;
+    r.bit = r.fx.bit?.score;                  // best 5 km, when the road qualifies
     r.scoredFor = key;
   }
   byId = new Map(roads.map((r) => [r.id, r]));
@@ -682,10 +683,23 @@ function applyFilter() {
   renderList();
 }
 
+/**
+ * Roads from the pre-built Alps-wide "best bits" list whose tile isn't loaded yet: enough to list them, and a
+ * click loads the tile. Scored at the balanced taste until then.
+ */
+function bitStubs() {
+  const q = state.query.trim().toLowerCase();
+  const show = { all: () => true, passes: (r) => !!r.pass, fav: (r) => isFav(r.id), rated: (r) => ratingOf(r.id) !== 0 }[state.show];
+  return (index.bits || []).filter((b) => !byId.has(b.id) && show &&
+    show(b) && (!q || [b.name, b.road, b.from, b.to].some((s) => s && s.toLowerCase().includes(q))))
+    .map((b) => ({ ...b, stub: true, bit: b.bit.score }));
+}
+
 function renderList() {
-  let list = matchingRoads();
-  if (state.inView) list = list.filter(inViewport);
   const k = state.sort;
+  let list = matchingRoads();
+  if (k === "bit") list = [...list.filter((r) => r.bit != null), ...bitStubs()];
+  if (state.inView) list = list.filter(inViewport);
   list.sort((a, b) => (b[k] ?? 0) - (a[k] ?? 0));
   $("#count").textContent = (state.inView ? `${list.length} roads in view` : `${list.length} roads`)
     + (shownMin ? ` · map shows ${shownMin}+ at this zoom` : "");
@@ -695,7 +709,9 @@ function renderList() {
       <span class="name">${esc(r.name)}${marks(r)}</span>
       <span class="meta">${esc([r.road, route(r.from, r.to)].filter(Boolean).join(" · ") || " ")}</span>
       <span class="nums">
-        <span class="bar" title="Fun score ${r.score}"><b style="width:${Math.min(100, r.score)}%"></b></span><span class="score">${r.score}</span>
+        ${k === "bit"
+          ? `<span class="bar" title="Best 5 km ${r.bit} (fun score ${r.score})"><b style="width:${Math.min(100, r.bit)}%"></b></span><span class="score">${r.bit}</span>`
+          : `<span class="bar" title="Fun score ${r.score}"><b style="width:${Math.min(100, r.score)}%"></b></span><span class="score">${r.score}</span>`}
         <span>${km(r.len)} km</span>
         <span>${r.hairpins} hairpins</span>
         <span>▲ ${fmt(r.eleMax)} m</span>
@@ -770,9 +786,11 @@ $("#tune").addEventListener("click", (e) => {
 renderTune();
 
 const listEl = $("#list");
-listEl.addEventListener("click", (e) => {
+listEl.addEventListener("click", async (e) => {
   const li = e.target.closest(".item");
-  if (li) select(byId.get(li.dataset.id));
+  if (!li) return;
+  if (!byId.has(li.dataset.id)) await loadTiles([tileOf.get(li.dataset.id)]);
+  select(byId.get(li.dataset.id));
 });
 listEl.addEventListener("mouseover", (e) => {
   const li = e.target.closest(".item");
@@ -824,7 +842,13 @@ function select(road, reversed = false) {
 
   if (!reversed) {
     const narrow = innerWidth <= 760;
-    map.fitBounds([[road.bb[0], road.bb[1]], [road.bb[2], road.bb[3]]], {
+    let bb = road.bb;
+    if (state.sort === "bit" && road.fx.bit) {
+      const [a, b] = span(v, [road.fx.bit.from, road.fx.bit.to]);
+      const pts = v.coords.filter((_, i) => v.dist[i] >= a && v.dist[i] <= b);
+      if (pts.length > 1) bb = [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
+    }
+    map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], {
       padding: narrow ? { top: 60, left: 30, right: 50, bottom: 30 } : { top: 70, left: 50, right: 60, bottom: $("#detail").offsetHeight + 40 },
       pitch: state.is3d ? 50 : 0, duration: 1200, maxZoom: 14.5,
     });
@@ -877,7 +901,8 @@ function renderDetail() {
   const notes = [
     whole ? "Scored on the whole road" : `Scored on its best ${km(s1 - s0)} km (km ${km(s0)}–${km(s1)})`,
     `${fx.goodKm.toFixed(fx.goodKm < 10 ? 1 : 0)} km of good riding ×${fx.lengthF.toFixed(2)}`,
-  ].join(" · ");
+    fx.bit && ((([a, b]) => `best 5 km: ${fx.bit.score} (km ${km(a)}–${km(b)})`)(span(v, [fx.bit.from, fx.bit.to]))),
+  ].filter(Boolean).join(" · ");
   const hot = fx.hot.map((h) => span(v, h)).sort((a, b) => a[0] - b[0]);
   const sc = fx.scenery;
   const scen = [

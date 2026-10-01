@@ -5,9 +5,9 @@
  */
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
-import { ALGO_VERSION, findTwisties, Terrain, TERRAIN_URL, terrariumToMetres } from "../site/core/twisty.js";
+import { ALGO_VERSION, findTwisties, scoreRoad, Terrain, TERRAIN_URL, terrariumToMetres } from "../site/core/twisty.js";
 import { decodePNG } from "./png.mjs";
-import { neighbours, ownsRoad, padBbox, tileBbox, touches } from "./tiles.mjs";
+import { bitEntry, neighbours, ownsRoad, padBbox, tileBbox, topBits, touches } from "./tiles.mjs";
 
 const root = new URL("../", import.meta.url);
 const region = JSON.parse(await readFile(new URL("tools/region.json", root), "utf8"));
@@ -28,6 +28,7 @@ const out = new URL("site/data/tiles/", root);
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 const index = { version: ALGO_VERSION, generated: new Date().toISOString().slice(0, 10), start: region.start, tiles: [], ids: {} };
+const bits = [];
 
 for (const key of region.tiles) {
   const box = tileBbox(key), padded = padBbox(box, region.pad);
@@ -44,8 +45,10 @@ for (const key of region.tiles) {
   await writeFile(new URL(`${key}.json`, out), JSON.stringify({ version: ALGO_VERSION, key, bbox: box, roads, passes: found.passes }));
   index.tiles.push({ key, bbox: box, roads: roads.length });
   index.ids[key] = roads.map((r) => r.id).join(",");
+  for (const r of roads) { const fx = scoreRoad(r); if (fx.bit) bits.push(bitEntry(r, key, fx)); }
   log(`${key}: ${roads.length} roads, ${found.passes.length} passes; best ${roads.slice(0, 3).map((r) => `${r.name} ${r.score}`).join(", ")}`);
   terrain.tiles.clear();                                  // keep memory flat; neighbours re-load their own
 }
+index.bits = topBits(bits);
 await writeFile(new URL("site/data/index.json", root), JSON.stringify(index));
 log(`wrote ${index.tiles.length} tiles, ${index.tiles.reduce((a, t) => a + t.roads, 0)} roads`);

@@ -30,3 +30,18 @@ export function neighbours(key) {
   for (const dy of [-1, 0, 1]) for (const dx of [-1, 0, 1]) out.push(`${lat + dy}_${lon + dx}`);
   return out;
 }
+
+/** The "best bits" list in index.json: the best 5 km stretches across all tiles, so the site can rank the whole
+ *  region without loading every tile. Each entry carries just enough to show it in the list. */
+const BITS_KEPT = 300;
+const r4 = (v) => +v.toFixed(4);
+export function bitEntry(road, tile, fx) {
+  const lons = road.coords.map((c) => c[0]), lats = road.coords.map((c) => c[1]);
+  return {
+    id: road.id, tile, name: road.name, road: road.road, from: road.from, to: road.to, len: road.len,
+    hairpins: road.hairpins, eleMax: road.eleMax, pass: road.pass ? { name: road.pass.name } : null,
+    bb: [r4(Math.min(...lons)), r4(Math.min(...lats)), r4(Math.max(...lons)), r4(Math.max(...lats))],
+    score: fx.score, bit: fx.bit,
+  };
+}
+export const topBits = (entries) => entries.sort((a, b) => b.bit.score - a.bit.score || b.score - a.score).slice(0, BITS_KEPT);

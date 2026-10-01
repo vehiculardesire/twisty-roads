@@ -47,6 +47,7 @@ const PER_BIN = BIN / STEP;              // 10 m samples per slice
 const BIN_CHARS = 10;
 const WINDOW_KM = 15;                    // a road is scored on its best stretch of up to this long
 const GOOD_KM_CAP = 30;                  // good riding beyond this adds nothing more
+const BIT_KM = 5;                        // "best bits": a road's most intense 5 km, rated on its own
 const BUILT_UP_KEEP = 0.3;               // bends in villages count 30%: fun to look at, not to ride hard
 
 // Bend weights per kind (sweeping, flowing, tight, hairpin-tight) at the two ends and middle of the taste slider.
@@ -151,9 +152,7 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
   const [pB, pH, pS, pR] = [pre(bend), pre(hp), pre(scen), pre(bins.map((b) => b.r))];
   const sum = (p, i, j) => p[j] - p[i];
 
-  const W = Math.max(1, Math.min(nb, Math.round(WINDOW_KM / binKm)));
-  let best = null;
-  for (let i = 0; i + W <= nb; i++) {
+  const stretchFun = (i, W) => {
     const win = ele.slice(i, i + W);
     const relief = Math.max(...win) - Math.min(...win);
     const climb = Math.min(relief, 1500) / 1500;
@@ -164,9 +163,19 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
       scenery: 1 + mix.scenery * 0.5 * (sum(pS, i, i + W) / W),
       hairpins: 1 + mix.hairpins * (hairpinFactor(sum(pH, i, i + W), w.hairpinBonus) - 1),
     };
-    const fun = parts.bends * (parts.terrain + parts.scenery + parts.hairpins - 2);
-    if (!best || fun > best.fun) best = { fun, i, parts, rolling: rolling > climb };
-  }
+    return { fun: parts.bends * (parts.terrain + parts.scenery + parts.hairpins - 2), i, parts, rolling: rolling > climb };
+  };
+  const bestOf = (W, ok = () => true) => {
+    let best = null;
+    for (let i = 0; i + W <= nb; i++) {
+      if (!ok(i)) continue;
+      const f = stretchFun(i, W);
+      if (!best || f.fun > best.fun) best = f;
+    }
+    return best;
+  };
+  const W = Math.max(1, Math.min(nb, Math.round(WINDOW_KM / binKm)));
+  const best = bestOf(W);
 
   // how intense each part of the road is (bends + scenery per km, smoothed over 1 km)
   const raw = bins.map((b, i) => (bend[i] * (1 + 0.5 * scen[i])) / binKm);
@@ -179,6 +188,18 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
   const intensity = best.fun / (W * binKm);
   const linear = (100 * intensity * WINDOW_KM * lengthF) / (SCORE_REF * tasteScale(taste, mix));
   const score = Math.round(Math.min(100, linear));
+
+  // best bit: the most intense 5 km, scored as if the whole road were that good (no credit for length).
+  // Only on roads you'd ride for it: a numbered road or a named pass (not a forest track or a village lane),
+  // 5 km or more, not mostly narrow, and not through villages.
+  let bit = null;
+  const B = Math.round(BIT_KM / binKm), pU = pre(bins.map((x) => x.u));
+  const proper = /^([A-Z]{1,4} ?)?\d/.test(road.road || "") || !!road.pass;
+  const b = proper && nb >= B && (road.warn?.narrow ?? 0) < 20 ? bestOf(B, (i) => sum(pU, i, i + B) / B <= 0.2) : null;
+  if (b) {
+    const v = (100 * (b.fun / BIT_KM) * WINDOW_KM) / (SCORE_REF * tasteScale(taste, mix));
+    bit = { score: Math.round(Math.min(100, v)), from: b.i * BIN, to: (b.i + B) * BIN };
+  }
 
   // hot spots: stretches within 70% of the road's most intense kilometre, at least 400 m long
   const peakDens = Math.max(...dens), hot = [];
@@ -199,7 +220,7 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
 
   const count = (f) => bins.filter(f).length * binKm;
   return {
-    score, linear, intensity, lengthF, goodKm, parts: best.parts, rolling: best.rolling,
+    score, linear, intensity, lengthF, goodKm, parts: best.parts, rolling: best.rolling, bit,
     stretch: [best.i * BIN, (best.i + W) * BIN], hot, peak, length: nb * BIN,
     scenery: {
       score: Math.round((100 * scen.reduce((a, b) => a + b, 0)) / nb),

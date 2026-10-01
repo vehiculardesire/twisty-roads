@@ -9,7 +9,8 @@ A static site with no backend, no accounts and no API keys, hosted free on GitHu
 
 ## What it does
 
-- **Ranks roads** by a fun score, with a **taste slider** from fast sweepers to tight hairpins.
+- **Ranks roads** by a fun score, with a **taste slider** from fast sweepers to tight hairpins, or by their
+  **best 5 km** alone (for roads you'd ride for one great climb), in view or across the whole Western Alps.
 - **The Western Alps and the Jura are built in** (from Nice to the Stelvio, and from the Jura to Lake Como), loaded a tile at a time as
   you move the map, so the site opens instantly. Zoomed out, the map only draws the better roads.
 - **Scans anywhere else.** Type a town, or use *Near me* or *Map view*, and pick 20 to 100 km. Your browser
@@ -123,9 +124,15 @@ node tools/fetch-tile.mjs 46_6
 node tools/build-tiles.mjs
 ```
 
+Re-make just the Alps-wide best-5-km list from the tiles already there (no downloads):
+
+```bash
+node tools/build-bits.mjs
+```
+
 **Deploy:** push to `main`.
 - `pages.yml` publishes `site/` to GitHub Pages whenever the site changes.
-- `refresh-data.yml` rebuilds the tiles on 1 March and 1 September, when `tools/` changes, or by hand from the
+- `refresh-data.yml` rebuilds the tiles on 1 March and 1 September, or by hand from the
   Actions tab, then redeploys. Each tile downloads in its own job: if the map servers fail one, *Re-run failed
   jobs* redoes just that tile.
 

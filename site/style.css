@@ -87,7 +87,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .explore {
   margin: 10px 20px 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px;
-  display: grid; gap: 8px; background: var(--bg);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; background: var(--bg);   /* minmax: don't grow to the input's natural width */
 }
 .explore input { flex: 1; min-width: 0; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }
 .explore select { padding: 7px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); }

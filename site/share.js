@@ -38,12 +38,16 @@ function wrap(g, text, maxW) {
 }
 
 /**
- * card: { name, sub, score, factors, stats: [[label, value]], profile: [[distance m, elevation m]], link }
- * Returns a PNG Blob.
+ * card: { name, sub, score, factors: [[label, value text, share 0..1]], stats: [[label, value]], profile: [[distance m, elevation m]] }
+ * Returns a PNG Blob. Gulf livery: navy panel, orange for the score and its bars.
  */
+const NAVY = "#101c27", INK = "#eef3f7", INK2 = "#a7b7c6", MUTED = "#7f93a6", LINE = "#1c2c3b", ORANGE = "#f26b1d";
+const SANS = '"Geist", system-ui, sans-serif', MONO = '"Geist Mono", ui-monospace, monospace';
+
 export async function makeCard(map, road, card) {
+  await document.fonts.ready;
   const c = new OffscreenCanvas(W, H), g = c.getContext("2d");
-  g.fillStyle = "#111110";
+  g.fillStyle = NAVY;
   g.fillRect(0, 0, W, H);
 
   // map, cropped to fill the left side
@@ -51,65 +55,71 @@ export async function makeCard(map, road, card) {
   const k = Math.max(MAP_W / img.width, H / img.height), sw = MAP_W / k, sh = H / k;
   g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, MAP_W, H);
 
-  const x = MAP_W + 36, maxW = W - x - 36;
-  let y = 58;
-  g.fillStyle = "#ffffff";
-  g.font = "700 34px system-ui, sans-serif";
-  for (const l of wrap(g, card.name, maxW).slice(0, 2)) { g.fillText(l, x, y); y += 40; }
-  g.fillStyle = "#c3c2b7";
-  g.font = "16px system-ui, sans-serif";
-  if (card.sub) { g.fillText(wrap(g, card.sub, maxW)[0], x, y); y += 30; }
+  const x = MAP_W + 40, maxW = W - x - 40;
+  let y = 64;
+  g.fillStyle = INK;
+  g.font = `600 32px ${SANS}`;
+  for (const l of wrap(g, card.name, maxW).slice(0, 2)) { g.fillText(l, x, y); y += 38; }
+  g.fillStyle = MUTED;
+  g.font = `16px ${SANS}`;
+  if (card.sub) { g.fillText(wrap(g, card.sub, maxW)[0], x, y); y += 26; }
 
-  y += 34;
-  g.fillStyle = "#f16913";
-  g.font = "800 72px system-ui, sans-serif";
-  g.fillText(String(card.score), x, y + 20);
-  const sw2 = g.measureText(String(card.score)).width;
-  g.font = "600 15px system-ui, sans-serif";
-  g.fillStyle = "#898781";
-  g.fillText("FUN", x + sw2 + 10, y + 18);
+  // score, and the four parts as small bars
   y += 52;
-  g.fillStyle = "#c3c2b7";
-  g.font = "14px system-ui, sans-serif";
-  for (const l of wrap(g, card.factors, maxW)) { g.fillText(l, x, y); y += 20; }
+  g.fillStyle = INK;
+  g.font = `500 64px ${MONO}`;
+  g.fillText(String(card.score), x, y);
+  g.fillStyle = MUTED;
+  g.font = `14px ${SANS}`;
+  g.fillText("Fun score", x, y + 24);
+  const bx = x + 150, bw = maxW - 150 - 56;
+  card.factors.forEach(([label, val, share], i) => {
+    const by = y - 52 + i * 20;
+    g.fillStyle = INK2; g.font = `13px ${SANS}`; g.textAlign = "left"; g.fillText(label, bx, by + 4);
+    g.fillStyle = ORANGE; g.fillRect(bx + 70, by - 2, Math.max(4, Math.min(1, share) * (bw - 70)), 4);
+    g.fillStyle = INK; g.font = `13px ${MONO}`; g.textAlign = "right"; g.fillText(val, x + maxW, by + 4);
+    g.textAlign = "left";
+  });
 
-  y += 16;
+  y += 64;
+  g.fillStyle = LINE;
+  g.fillRect(x, y - 24, maxW, 1);
   card.stats.forEach(([label, val], i) => {
-    const cx = x + (i % 2) * (maxW / 2), cy = y + Math.floor(i / 2) * 50;
-    g.fillStyle = "#898781"; g.font = "600 12px system-ui, sans-serif"; g.fillText(label.toUpperCase(), cx, cy);
-    g.fillStyle = "#ffffff"; g.font = "600 20px system-ui, sans-serif"; g.fillText(val, cx, cy + 24);
+    const cx = x + i * (maxW / card.stats.length);
+    g.fillStyle = MUTED; g.font = `13px ${SANS}`; g.fillText(label, cx, y);
+    g.fillStyle = INK; g.font = `500 20px ${MONO}`; g.fillText(val, cx, y + 26);
   });
 
   // elevation profile along the bottom of the panel
-  const pTop = H - 150, pH = 80, pts = card.profile;
-  const lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1])) || lo + 1, tot = pts[pts.length - 1][0] || 1;
+  const pTop = H - 140, pH = 72, pts = card.profile;
+  const lo = Math.min(...pts.map((q) => q[1])), hi = Math.max(...pts.map((q) => q[1])) || lo + 1, tot = pts[pts.length - 1][0] || 1;
   const PX = (d) => x + (d / tot) * maxW, PY = (e) => pTop + pH - ((e - lo) / (hi - lo || 1)) * pH;
   g.beginPath();
   g.moveTo(PX(0), pTop + pH);
   for (const [d, e] of pts) g.lineTo(PX(d), PY(e));
   g.lineTo(PX(tot), pTop + pH);
   g.closePath();
-  g.fillStyle = "rgba(241, 105, 19, 0.35)";
+  g.fillStyle = LINE;
   g.fill();
-  g.strokeStyle = "#f16913";
+  g.strokeStyle = ORANGE;
   g.lineWidth = 2;
   g.beginPath();
   pts.forEach(([d, e], i) => (i ? g.lineTo(PX(d), PY(e)) : g.moveTo(PX(d), PY(e))));
   g.stroke();
-  g.fillStyle = "#898781";
-  g.font = "12px system-ui, sans-serif";
+  g.fillStyle = MUTED;
+  g.font = `12px ${MONO}`;
   g.fillText(`${Math.round(lo)} m`, x, pTop + pH + 16);
   g.textAlign = "right";
-  g.fillText(`${Math.round(hi)} m`, x + maxW, pTop - 4);
+  g.fillText(`${Math.round(hi)} m`, x + maxW, pTop - 6);
 
-  // footer: link and credits
-  g.fillStyle = "#c3c2b7";
-  g.font = "600 13px system-ui, sans-serif";
-  g.fillText("Twisty Roads", x + maxW, H - 30);
+  // footer: name and credits
+  g.fillStyle = INK2;
+  g.font = `600 13px ${SANS}`;
+  g.fillText("Twisty Roads", x + maxW, H - 28);
   g.textAlign = "left";
-  g.fillStyle = "#898781";
-  g.font = "11px system-ui, sans-serif";
-  g.fillText("Map © OpenFreeMap, © OpenStreetMap contributors · Terrain: AWS Terrain Tiles", x, H - 12);
+  g.fillStyle = MUTED;
+  g.font = `11px ${SANS}`;
+  g.fillText("Map © OpenFreeMap, © OpenStreetMap contributors. Terrain: AWS Terrain Tiles", x, H - 12);
 
   return c.convertToBlob({ type: "image/png" });
 }

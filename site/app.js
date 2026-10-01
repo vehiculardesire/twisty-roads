@@ -46,15 +46,29 @@ const tileOf = new Map(Object.entries(index.ids).flatMap(([k, ids]) => ids.split
 const boxesMeet = ([s, w, n, e], [s2, w2, n2, e2]) => s <= n2 && n >= s2 && w <= e2 && e >= w2;
 const tilesIn = (box) => index.tiles.filter((t) => boxesMeet(t.bbox, box)).map((t) => t.key);
 
+// Day is OpenFreeMap's white "positron" map, night its navy "fiord" map (the Gulf livery's dark blue).
+const STYLES = { day: "positron", night: "fiord" };
+const theme = () => document.documentElement.dataset.theme === "day" ? "day" : "night";
+async function fetchStyle(t) {
+  const st = await fetch(`https://tiles.openfreemap.org/styles/${STYLES[t]}`).then((r) => r.json());
+  // Drop any low-zoom shaded-relief raster: we draw our own hillshade, and when its server is slow
+  // MapLibre waits on it forever.
+  delete st.sources.ne2_shaded;
+  st.layers = st.layers.filter((l) => l.source !== "ne2_shaded");
+  return st;
+}
+const MAP_LOOK = {
+  day: { shadow: "#59626c", highlight: "#ffffff", accent: "#8a939c",
+    sky: { "sky-color": "#c9d9ea", "horizon-color": "#eef1f4", "fog-color": "#f3f5f7" } },
+  night: { shadow: "#02060a", highlight: "#3b5266", accent: "#0b141c",
+    sky: { "sky-color": "#0a121a", "horizon-color": "#1c2c3b", "fog-color": "#101c27" } },
+};
+
 const [baseStyle, savedAreas, savedRides] = await Promise.all([
-  fetch("https://tiles.openfreemap.org/styles/positron").then((r) => r.json()),
+  fetchStyle(theme()),
   idb("areas", "getAll").catch(() => []),
   loadRides(),
 ]);
-// Drop the style's low-zoom shaded-relief raster: we draw our own hillshade, and when its server is slow
-// MapLibre waits on it forever.
-delete baseStyle.sources.ne2_shaded;
-baseStyle.layers = baseStyle.layers.filter((l) => l.source !== "ne2_shaded");
 
 const state = {
   sort: "score", query: "", inView: true, show: "all", whyOpen: false, stopsOpen: false,
@@ -339,56 +353,63 @@ function showRider(p) {
 }
 function hideRider() { if (riderOn) { rider.remove(); riderOn = false; } }
 const peakMarker = new maplibregl.Marker({
-  element: Object.assign(document.createElement("div"), { className: "peak", textContent: "★", title: "The best bit" }),
+  element: Object.assign(document.createElement("div"), { className: "peak", innerHTML: '<i class="ph-fill ph-star"></i>', title: "The best bit" }),
 });
 
 const emptyFC = { type: "FeatureCollection", features: [] };
 
 // Set up as soon as the style is parsed; don't wait for every tile ("load") - one slow tile server shouldn't block the app.
+// Our layers go on top of every base style, so switching day/night re-adds them and puts the current data back.
 const mapReady = new Promise((resolve) => map.once("style.load", resolve));
-mapReady.then(() => {
+map.on("style.load", () => { addLayers(); restoreMapState(); });
+
+function addLayers() {
   const firstSymbol = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
+  const look = MAP_LOOK[theme()];
 
   map.addSource("dem", { type: "raster-dem", tiles: [TERRAIN_TILES], encoding: "terrarium", tileSize: 256, maxzoom: 15 });
   map.addSource("hs", { type: "raster-dem", tiles: [TERRAIN_TILES], encoding: "terrarium", tileSize: 256, maxzoom: 15 });
   map.addLayer({
     id: "hillshade", type: "hillshade", source: "hs",
-    paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#5a5a55", "hillshade-highlight-color": "#ffffff", "hillshade-accent-color": "#8a8a84" },
+    paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": look.shadow, "hillshade-highlight-color": look.highlight, "hillshade-accent-color": look.accent },
   }, firstSymbol);
-  map.setTerrain({ source: "dem", exaggeration: state.exag });
-  map.setSky({
-    "sky-color": "#b9d3ee", "horizon-color": "#eef2f5", "fog-color": "#f3f3f1",
-    "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.85,
-  });
+  map.setTerrain(state.is3d ? { source: "dem", exaggeration: state.exag } : null);
+  map.setSky({ ...look.sky, "sky-horizon-blend": 0.6, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.85 });
 
   map.addSource("rides", { type: "geojson", data: ridesGeoJSON() });
   map.addLayer({
     id: "rides", type: "line", source: "rides",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#2b6cb0", "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1.5, 14, 4], "line-opacity": 0.55 },
+    paint: { "line-color": css("--ride"), "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1.5, 14, 4], "line-opacity": 0.6 },
   }, firstSymbol);
   map.addSource("roads", { type: "geojson", data: roadsGeoJSON() });
   // zoom must be the outermost interpolation; per-road score scales the width inside each stop
   const scoreWidth = ["interpolate", ["linear"], ["get", "score"], 0, 1, 100, 2.2];
   const width = (base, byScore = false) => ["interpolate", ["linear"], ["zoom"],
     ...[[7, 0.8], [10, 1.6], [14, 3.2], [17, 6]].flatMap(([z, k]) => [z, byScore ? ["*", scoreWidth, base * k] : base * k])];
+  // at night the best roads glow, like headlights on a dark mountain (the brighter, the better the road)
+  map.addLayer({
+    id: "roads-glow", type: "line", source: "roads",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": scoreRamp(), "line-width": width(5, true), "line-blur": width(4), "line-opacity": +css("--glow") },
+  }, firstSymbol);
   map.addLayer({
     id: "roads-casing", type: "line", source: "roads",
     layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "score"] },
-    paint: { "line-color": "#ffffff", "line-width": width(1.7, true), "line-opacity": 0.9 },
+    paint: { "line-color": css("--casing"), "line-width": width(1.7, true), "line-opacity": 0.9 },
   }, firstSymbol);
   map.addLayer({
     id: "roads", type: "line", source: "roads",
     layout: { "line-cap": "round", "line-join": "round", "line-sort-key": ["get", "score"] },
     paint: {
-      "line-color": ["interpolate", ["linear"], ["get", "score"], 0, css("--s1"), 35, css("--s2"), 65, css("--s3"), 100, css("--s4")],
+      "line-color": scoreRamp(),
       "line-width": width(1, true),
     },
   }, firstSymbol);
   map.addLayer({
     id: "roads-hover", type: "line", source: "roads", filter: ["==", ["get", "id"], ""],
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#0b0b0b", "line-width": width(2.6), "line-opacity": 0.85 },
+    paint: { "line-color": css("--ink"), "line-width": width(2.6), "line-opacity": 0.85 },
   }, "roads");
 
   // selected road: one continuous white casing under runs coloured by bend tightness
@@ -403,7 +424,7 @@ mapReady.then(() => {
   map.addLayer({
     id: "sel-casing", type: "line", source: "sel",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#ffffff", "line-width": width(5) },
+    paint: { "line-color": css("--sel-casing"), "line-width": width(5) },
   });
   map.addLayer({
     id: "sel-line", type: "line", source: "sel-runs",
@@ -431,12 +452,34 @@ mapReady.then(() => {
       "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 11,
       "text-anchor": "top", "text-offset": [0, 0.6], "symbol-sort-key": ["-", 0, ["get", "ele"]],
     },
-    paint: { "text-color": "#3a2a1a", "text-halo-color": "#ffffff", "text-halo-width": 1.6 },
+    paint: { "text-color": css("--label"), "text-halo-color": css("--casing"), "text-halo-width": 1.6 },
   });
   map.addLayer({
     id: "pass-dots", type: "circle", source: "passes", minzoom: 8,
-    paint: { "circle-radius": 3.5, "circle-color": "#3a2a1a", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 },
+    paint: { "circle-radius": 3.5, "circle-color": css("--label"), "circle-stroke-color": css("--casing"), "circle-stroke-width": 1.5 },
   }, "passes");
+}
+
+const scoreRamp = () => ["interpolate", ["linear"], ["get", "score"], 0, css("--s1"), 35, css("--s2"), 65, css("--s3"), 100, css("--s4")];
+
+/** After a style switch our sources are new and empty: put the roads, the selection, stops and the scan box back. */
+function restoreMapState() {
+  setMapFilter();
+  if (state.hover) map.setFilter("roads-hover", ["==", ["get", "id"], state.hover]);
+  if (scanBox) showScanBox(scanBox);
+  if (state.sel) {
+    const v = state.view;
+    map.getSource("sel").setData({ type: "Feature", geometry: { type: "LineString", coordinates: v.coords.map((p) => [p[0], p[1]]) } });
+    map.getSource("sel-runs").setData(bendRuns(v));
+    renderHot();
+    map.setPaintProperty("roads", "line-opacity", 0.45);
+    map.setPaintProperty("roads-casing", "line-opacity", 0.4);
+    map.setPaintProperty("roads-glow", "line-opacity", 0);
+    if ($("#dStops")._stops) showStopsOnMap($("#dStops")._stops);
+  }
+}
+
+mapReady.then(() => {
 
   // ---- hover & click on roads
   const tip = $("#tip");
@@ -585,14 +628,16 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
   worker.postMessage({ bbox, maxRoads: radiusKm > 60 ? 1000 : radiusKm > 30 ? 700 : 400 });
 }
 
+let scanBox = null;
 function showScanBox(bbox) {
+  scanBox = bbox;
   const [s, w, n, e] = bbox;
   map.getSource("scan-area").setData({ type: "Feature", geometry: { type: "LineString", coordinates: [[w, s], [e, s], [e, n], [w, n], [w, s]] } });
 }
 
 function setScanUI(busy, msg, isError = false) {
   for (const b of ["#scanGo", "#scanView", "#nearMe"]) $(b).disabled = busy;
-  $("#scanGo").textContent = busy ? "Scanning…" : "Find";
+  $("#scanGo").textContent = busy ? "Scanning…" : "Scan";
   const st = $("#scanStatus");
   st.hidden = !msg;
   st.textContent = msg || "";
@@ -600,9 +645,15 @@ function setScanUI(busy, msg, isError = false) {
   st.classList.toggle("busy", busy);
 }
 
+// The search box filters roads as you type. Scan (or Enter, when no road matches) scans that place instead.
+let enterPressed = false;
+$("#search").addEventListener("keydown", (e) => { if (e.key === "Enter") enterPressed = true; });
 $("#scanForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const q = $("#place").value.trim(), radius = +$("#radius").value;
+  const viaEnter = enterPressed;
+  enterPressed = false;
+  const q = $("#search").value.trim(), radius = +$("#radius").value;
+  if (viaEnter && q && matchingRoads().length) return;      // Enter while filtering: keep the filter
   if (!q) { const c = map.getCenter(); return runScan(c.lat, c.lng, radius, null); }
   setScanUI(true, `Looking up "${q}"…`);
   let f;
@@ -618,6 +669,8 @@ $("#scanForm").addEventListener("submit", async (e) => {
   if (!f) return setScanUI(false, `Couldn't find "${q}".`, true);
   const [lon, lat] = f.geometry.coordinates;
   setScanUI(false, "");
+  $("#search").value = state.query = "";                     // the place name isn't a road filter
+  applyFilter();
   runScan(lat, lon, radius, f.properties.name || q);
 });
 $("#scanView").addEventListener("click", () => {
@@ -637,14 +690,14 @@ $("#nearMe").addEventListener("click", () => {
 function renderAreas() {
   const el = $("#areas");
   el.hidden = !areas.length;
-  el.innerHTML = areas.length ? `<span class="areas-label">Your areas</span>` + [...areas].reverse().map((a) => `
-    <span class="area-chip" data-key="${esc(a.key)}">
+  el.innerHTML = areas.length ? `<span class="chips-label">Your scans</span>` + [...areas].reverse().map((a) => `
+    <span class="chip" data-key="${esc(a.key)}">
       <button class="area-go" title="Show on map">${esc(a.label)} <small>${a.radius} km · ${a.roads.length}${a.missing === 0 ? "" : a.missing > 0 ? ` · incomplete (${a.missing} missing)` : " · coverage unknown"}</small></button>
-      <button class="area-x" title="Forget this area" aria-label="Forget ${esc(a.label)}">✕</button>
+      <button class="area-x x" title="Forget this area" aria-label="Forget ${esc(a.label)}"><i class="ph ph-x"></i></button>
     </span>`).join("") : "";
 }
 $("#areas").addEventListener("click", (e) => {
-  const chip = e.target.closest(".area-chip");
+  const chip = e.target.closest(".chip");
   if (!chip) return;
   const a = areas.find((x) => x.key === chip.dataset.key);
   if (e.target.closest(".area-x")) return removeArea(a.key);
@@ -666,10 +719,15 @@ function matchingRoads() {
     (!q || [r.name, r.road, r.from, r.to, r.pass?.name].some((s) => s && s.toLowerCase().includes(q))));
 }
 
-/** ★ favourite, ✓ ridden, 👍/👎 your rating */
+/** favourite, ridden, your rating */
 function marks(r) {
-  const m = [isFav(r.id) && "★", ridden.has(r.id) && "✓", ratingOf(r.id) > 0 && "👍", ratingOf(r.id) < 0 && "👎"].filter(Boolean);
-  return m.length ? ` <span class="marks">${m.join(" ")}</span>` : "";
+  const m = [
+    isFav(r.id) && '<i class="ph-fill ph-star" title="Favourite"></i>',
+    ridden.has(r.id) && '<i class="ph ph-check-circle" title="Ridden"></i>',
+    ratingOf(r.id) > 0 && '<i class="ph-fill ph-thumbs-up" title="Yay"></i>',
+    ratingOf(r.id) < 0 && '<i class="ph-fill ph-thumbs-down" title="Nay"></i>',
+  ].filter(Boolean);
+  return m.length ? `<span class="marks">${m.join("")}</span>` : "";
 }
 
 function inViewport(r) {
@@ -687,6 +745,7 @@ function setMapFilter() {
   const f = ["all", ["in", ["get", "id"], ["literal", matchingRoads().map((r) => r.id)]], [">=", ["get", "score"], shownMin]];
   map.setFilter("roads", f);
   map.setFilter("roads-casing", f);
+  map.setFilter("roads-glow", ["all", f, [">=", ["get", "score"], 55]]);
 }
 
 /** Map shows everything that matches the search; the list can also be limited to the map view. */
@@ -715,20 +774,16 @@ function renderList() {
   list.sort((a, b) => (b[k] ?? 0) - (a[k] ?? 0));
   $("#count").textContent = (state.inView ? `${list.length} roads in view` : `${list.length} roads`)
     + (shownMin ? ` · map shows ${shownMin}+ at this zoom` : "");
-  $("#list").innerHTML = list.slice(0, 300).map((r, i) => `
+  $("#list").innerHTML = list.slice(0, 300).map((r) => {
+    const val = k === "bit" ? r.bit : r.score;
+    return `
     <li class="item${state.sel?.id === r.id ? " active" : ""}" data-id="${r.id}">
-      <span class="rank">${i + 1}</span>
+      <span class="score" title="${k === "bit" ? `Best 5 km ${r.bit} (fun score ${r.score})` : `Fun score ${r.score}`}">${val}<i style="width:${Math.max(4, Math.min(100, val) * 0.4)}px"></i></span>
       <span class="name">${esc(r.name)}${marks(r)}</span>
       <span class="meta">${esc([r.road, route(r.from, r.to)].filter(Boolean).join(" · ") || " ")}</span>
-      <span class="nums">
-        ${k === "bit"
-          ? `<span class="bar" title="Best 5 km ${r.bit} (fun score ${r.score})"><b style="width:${Math.min(100, r.bit)}%"></b></span><span class="score">${r.bit}</span>`
-          : `<span class="bar" title="Fun score ${r.score}"><b style="width:${Math.min(100, r.score)}%"></b></span><span class="score">${r.score}</span>`}
-        <span>${km(r.len)} km</span>
-        <span>${r.hairpins} hairpins</span>
-        <span>▲ ${fmt(r.eleMax)} m</span>
-      </span>
-    </li>`).join("") || `<li class="empty">${state.inView ? "No scored roads in this part of the map. Zoom out, or scan it." : "No roads match."}</li>`;
+      <span class="nums"><span>${km(r.len)} km</span><span>${r.hairpins} hairpins</span><span>${fmt(r.eleMax)} m</span></span>
+    </li>`;
+  }).join("") || `<li class="empty">${state.inView ? "No scored roads in this part of the map. Zoom out, or scan it." : "No roads match."}</li>`;
 }
 
 function route(a, b) {
@@ -780,7 +835,7 @@ function renderTune() {
   } else if (yays >= 2 && nays >= 2) {
     el.innerHTML = `<button class="btn small" id="tuneLearn">Learn my taste from ${yays + nays} ratings</button>`;
   } else {
-    el.innerHTML = `Rate roads 👍 / 👎 to teach it your taste: ${yays} of 2 yays, ${nays} of 2 nays so far.`;
+    el.innerHTML = `Rate roads <i class="ph ph-thumbs-up"></i> or <i class="ph ph-thumbs-down"></i> to teach it your taste: ${yays} of 2 yays, ${nays} of 2 nays so far.`;
   }
 }
 function learnAndApply() {
@@ -833,6 +888,7 @@ function select(road, reversed = false) {
   renderHot();
   map.setPaintProperty("roads", "line-opacity", 0.45);
   map.setPaintProperty("roads-casing", "line-opacity", 0.4);
+  map.setPaintProperty("roads-glow", "line-opacity", 0);
 
   renderDetail();
   loadWeather(road);
@@ -844,12 +900,13 @@ function select(road, reversed = false) {
     `&destination=${pt(v.coords[v.coords.length - 1])}&waypoints=${[0.25, 0.5, 0.75].map((f) => pt(at(f))).join("%7C")}`;
 
   $("#detail").hidden = false;
+  $("#browse").hidden = true;
+  $("#detail").scrollTop = 0;
   drawProfile();
   renderLegend();
   document.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
   listEl.querySelector(`[data-id="${road.id}"]`)?.classList.add("active");
-  if (innerWidth <= 760) scrollTo({ top: 0, behavior: "smooth" });   // phone: the map is above the list
-  else listEl.querySelector(`[data-id="${road.id}"]`)?.scrollIntoView({ block: "nearest" });
+  if (innerWidth <= 760) scrollTo({ top: 0, behavior: "smooth" });   // phone: the map is above the panel
   history.replaceState(null, "", roadLink(road).slice(roadLink(road).indexOf("#")));
 
   if (!reversed) {
@@ -861,7 +918,7 @@ function select(road, reversed = false) {
       if (pts.length > 1) bb = [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
     }
     map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]], {
-      padding: narrow ? { top: 60, left: 30, right: 50, bottom: 30 } : { top: 70, left: 50, right: 60, bottom: $("#detail").offsetHeight + 40 },
+      padding: narrow ? { top: 60, left: 30, right: 50, bottom: 30 } : { top: 80, left: 70, right: 70, bottom: 70 },
       pitch: state.is3d ? 50 : 0, duration: 1200, maxZoom: 14.5,
     });
   }
@@ -872,8 +929,8 @@ function closureText(c) {
   if (!c) return null;
   const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const wk = c.match(/week\s*(\d+)\s*-\s*(\d+)/i);
-  if (wk) return `Closed about ${M[Math.min(11, Math.floor(((+wk[1] - 1) * 7) / 30.5))]}–${M[Math.min(11, Math.floor(((+wk[2] - 1) * 7) / 30.5))]}`;
-  if (/^[a-z]{3}\b.*-\s*[a-z]{3}/i.test(c)) return `Closed ${c.replace(/\b([a-z])([a-z]{2})\b/gi, (_, a, b) => a.toUpperCase() + b.toLowerCase()).replace(/\s*-\s*/, "–")}`;
+  if (wk) return `Closed about ${M[Math.min(11, Math.floor(((+wk[1] - 1) * 7) / 30.5))]} to ${M[Math.min(11, Math.floor(((+wk[2] - 1) * 7) / 30.5))]}`;
+  if (/^[a-z]{3}\b.*-\s*[a-z]{3}/i.test(c)) return `Closed ${c.replace(/\b([a-z])([a-z]{2})\b/gi, (_, a, b) => a.toUpperCase() + b.toLowerCase()).replace(/\s*-\s*/, " to ")}`;
   if (/winter/i.test(c)) return "Closed in winter";
   if (/snow/i.test(c)) return "Closed when snowy";
   return "Seasonal closures";
@@ -911,10 +968,10 @@ function renderDetail() {
   const [s0, s1] = span(v, fx.stretch);
   const whole = s1 - s0 >= v.total - 300;
   const notes = [
-    whole ? "Scored on the whole road" : `Scored on its best ${km(s1 - s0)} km (km ${km(s0)}–${km(s1)})`,
-    `${fx.goodKm.toFixed(fx.goodKm < 10 ? 1 : 0)} km of good riding ×${fx.lengthF.toFixed(2)}`,
-    fx.bit && ((([a, b]) => `best 5 km: ${fx.bit.score} (km ${km(a)}–${km(b)})`)(span(v, [fx.bit.from, fx.bit.to]))),
-  ].filter(Boolean).join(" · ");
+    whole ? "Scored on the whole road" : `Scored on its best ${km(s1 - s0)} km (km ${km(s0)} to ${km(s1)})`,
+    `${fx.goodKm.toFixed(fx.goodKm < 10 ? 1 : 0)} km of good riding, ×${fx.lengthF.toFixed(2)}`,
+    fx.bit && ((([a, b]) => `best 5 km scores ${fx.bit.score} (km ${km(a)} to ${km(b)})`)(span(v, [fx.bit.from, fx.bit.to]))),
+  ].filter(Boolean).join(". ") + ".";
   const hot = fx.hot.map((h) => span(v, h)).sort((a, b) => a[0] - b[0]);
   const sc = fx.scenery;
   const scen = [
@@ -924,28 +981,28 @@ function renderDetail() {
     sc.viewpoints && `${sc.viewpoints} viewpoint${sc.viewpoints > 1 ? "s" : ""}`,
     sc.builtPct >= 10 && `${sc.builtPct}% through villages (bends there count less)`,
   ].filter(Boolean);
+  // bends are the base; terrain, scenery and hairpins each add a bonus on top (bars scaled to their maximum)
+  const partRows = [
+    ["Bends", parts.bends, parts.bends.toFixed(1), 12, "Weighted km of bends in the best stretch, for your taste"],
+    [fx.rolling ? "Rolling" : "Terrain", parts.terrain - 1, `+${(parts.terrain - 1).toFixed(2)}`, 0.5, fx.rolling ? "Rolling: crests and dips" : "Climb within the stretch"],
+    ["Scenery", parts.scenery - 1, `+${(parts.scenery - 1).toFixed(2)}`, 0.5, "Views, drop-offs, viewpoints and high alpine terrain"],
+    ["Hairpins", parts.hairpins - 1, `+${(parts.hairpins - 1).toFixed(2)}`, 1, "Hairpins in the stretch"],
+  ];
   $("#dFun").innerHTML = `
-    <div class="fun-score"><b>${road.score}</b><span>fun</span></div>
-    <div class="fun-why">
+    <div class="fun-score"><b>${road.score}</b><span>Fun score</span></div>
+    <div class="parts">${partRows.map(([n, val, t, max, title]) => `
+      <div class="part" title="${title}"><span>${n}</span><i style="width:${clamp((val / max) * 100, 3, 100)}%"></i><span class="num">${t}</span></div>`).join("")}
+    </div>
+    <details class="more" id="why"${state.whyOpen ? " open" : ""}>
+      <summary>Why this score</summary>
       <div class="mix" title="How the ${totalBends.toFixed(1)} km of bends split by tightness">
         ${road.bends.map((k, i) => `<i style="flex:${k};--c:var(--c${i + 1})" title="${BEND_NAMES[i + 1]}: ${k.toFixed(1)} km"></i>`).join("")}
       </div>
-      <div class="factors">
-        <span title="Weighted km of bends in the best stretch, for your taste">${parts.bends.toFixed(1)} <small>bends</small></span>
-        <span class="x">× (1</span>
-        <span title="${fx.rolling ? "Rolling: crests and dips" : "Climb within the stretch"}">+${(parts.terrain - 1).toFixed(2)} <small>${fx.rolling ? "rolling" : "terrain"}</small></span>
-        <span title="Views, drop-offs, viewpoints and high alpine terrain">+${(parts.scenery - 1).toFixed(2)} <small>scenery</small></span>
-        <span title="Hairpins in the stretch">+${(parts.hairpins - 1).toFixed(2)} <small>hairpins</small></span>
-        <span class="x">)</span>
-      </div>
-      <details class="more" id="why"${state.whyOpen ? " open" : ""}>
-        <summary>Why this score</summary>
-        <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)} km</span>`).join("")}</div>
-        <div class="fun-note">${notes}</div>
-        ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)}–${km(b)}`).join(", ")}</div>` : ""}
-        ${scen.length ? `<div class="fun-note">Scenery: ${scen.join(" · ")}</div>` : ""}
-      </details>
-    </div>`;
+      <div class="mix-keys">${road.bends.map((k, i) => `<span><i style="--c:var(--c${i + 1})"></i>${BEND_NAMES[i + 1]} ${k.toFixed(1)} km</span>`).join("")}</div>
+      <div class="fun-note">${notes}</div>
+      ${hot.length ? `<div class="fun-note"><b class="hot-key">Hot spot${hot.length > 1 ? "s" : ""}</b> ${hot.map(([a, b]) => `km ${km(a)} to ${km(b)}`).join(", ")}</div>` : ""}
+      ${scen.length ? `<div class="fun-note">Scenery: ${scen.join(", ")}.</div>` : ""}
+    </details>`;
   $("#why").addEventListener("toggle", (e) => { state.whyOpen = e.target.open; });
 
   $("#dStats").innerHTML = [
@@ -953,7 +1010,7 @@ function renderDetail() {
     ["Bends", `${Math.round(road.inBends * 100)}% of it`],
     ["Hairpins", road.hairpins],
     ["Climb", `↑${fmt(v.climb)} ↓${fmt(v.descent)} m`],
-    ["Altitude", `${fmt(road.eleMin)}–${fmt(road.eleMax)} m`],
+    ["Altitude", `${fmt(road.eleMin)}-${fmt(road.eleMax)} m`],
     ["Steepest", `${road.maxGrad}%`, "Steepest 300 m stretch, estimated from ~25 m terrain data"],
   ].map(([k, val, t]) => `<div${t ? ` title="${t}"` : ""}><dt>${k}</dt><dd>${val}</dd></div>`).join("");
 
@@ -964,7 +1021,7 @@ function renderDetail() {
     w.toll && ["Toll road", ""],
     w.tunnel >= 10 && [`${w.tunnel}% in tunnels`, ""],
   ].filter(Boolean);
-  $("#dWarn").innerHTML = warns.map(([t, title]) => `<span class="badge" title="${esc(title)}">${esc(t)}</span>`).join("");
+  $("#dWarn").innerHTML = warns.map(([t, title]) => `<span class="badge" title="${esc(title)}"><i class="ph ph-warning"></i>${esc(t)}</span>`).join("");
   $("#dWarn").hidden = !warns.length;
   renderPersonal();
 }
@@ -979,7 +1036,10 @@ function deselect() {
   clearStops();
   map.setPaintProperty("roads", "line-opacity", 1);
   map.setPaintProperty("roads-casing", "line-opacity", 0.9);
+  map.setPaintProperty("roads-glow", "line-opacity", +css("--glow"));
   $("#detail").hidden = true;
+  $("#browse").hidden = false;
+  renderList();
   hideRider();
   renderLegend();
   document.querySelectorAll(".item.active").forEach((el) => el.classList.remove("active"));
@@ -1022,11 +1082,13 @@ function renderPersonal() {
   const r = state.sel;
   if (!r) return;
   const fav = isFav(r.id), rt = ratingOf(r.id);
-  $("#fav").textContent = fav ? "★" : "☆";
+  $("#fav").innerHTML = `<i class="${fav ? "ph-fill" : "ph"} ph-star"></i>`;
   $("#fav").classList.toggle("on", fav);
   $("#fav").title = fav ? "Remove from favourites" : "Add to favourites";
   $("#yay").classList.toggle("on", rt > 0);
   $("#nay").classList.toggle("on", rt < 0);
+  $("#yay").innerHTML = `<i class="${rt > 0 ? "ph-fill" : "ph"} ph-thumbs-up"></i>`;
+  $("#nay").innerHTML = `<i class="${rt < 0 ? "ph-fill" : "ph"} ph-thumbs-down"></i>`;
   $("#dRidden").hidden = !ridden.has(r.id);
 }
 
@@ -1048,27 +1110,52 @@ for (const [id, v] of [["#yay", 1], ["#nay", -1]]) {
 
 // ------------------------------------------------------------------ stops along the road
 
-/** Emoji drawn once into a small round icon, so stops can be a map layer (HTML markers are slow in 3D). */
-function stopIcon(emoji) {
-  const id = `stop:${emoji}`;
+/** The character a Phosphor icon draws with (read from its CSS, so it needs no lookup table). */
+const phosphorReady = document.fonts.load('16px "Phosphor"').catch(() => {});
+function glyphOf(name) {
+  const el = Object.assign(document.createElement("i"), { className: `ph ph-${name}` });
+  el.style.cssText = "position:absolute;visibility:hidden";
+  document.body.append(el);
+  const c = getComputedStyle(el, "::before").content;
+  el.remove();
+  return c.replace(/^["']|["']$/g, "");
+}
+
+/** A stop's icon drawn once into a round pin, so stops can be a map layer (HTML markers are slow in 3D). */
+function stopIcon(name) {
+  const id = `stop:${name}:${theme()}`;
   if (map.hasImage(id)) return id;
   const px = 2, size = 26 * px, c = document.createElement("canvas");
   c.width = c.height = size;
   const g = c.getContext("2d");
-  g.fillStyle = "rgba(0, 0, 0, 0.25)";
+  g.fillStyle = "rgba(0, 0, 0, 0.3)";
   g.beginPath(); g.arc(size / 2, size / 2 + px, size / 2 - px, 0, Math.PI * 2); g.fill();
-  g.fillStyle = "#ffffff";
-  g.beginPath(); g.arc(size / 2, size / 2, size / 2 - 2 * px, 0, Math.PI * 2); g.fill();
-  g.font = `${14 * px}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+  g.fillStyle = css("--surface");
+  g.strokeStyle = css("--accent");
+  g.lineWidth = 1.5 * px;
+  g.beginPath(); g.arc(size / 2, size / 2, size / 2 - 2.5 * px, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.font = `${14 * px}px "Phosphor"`;
+  g.fillStyle = css("--accent");
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.fillText(emoji, size / 2, size / 2 + px);
+  g.fillText(glyphOf(name), size / 2, size / 2 + 0.5 * px);
   map.addImage(id, g.getImageData(0, 0, size, size), { pixelRatio: px });
   return id;
 }
 
+function showStopsOnMap(list) {
+  map.getSource("stops")?.setData({
+    type: "FeatureCollection",
+    features: list.map((st, i) => ({
+      type: "Feature", properties: { icon: stopIcon(st.icon), i, label: st.name ? `${st.kind}: ${st.name}` : st.kind },
+      geometry: { type: "Point", coordinates: [st.lon, st.lat] },
+    })),
+  });
+}
+
 function clearStops() {
   map.getSource("stops")?.setData(emptyFC);
+  $("#dStops")._stops = null;
 }
 
 async function loadStops(road) {
@@ -1078,7 +1165,7 @@ async function loadStops(road) {
   el.innerHTML = `<span class="muted">Looking for cafés, food and fuel along the road…</span>`;
   let stops;
   try {
-    stops = await findStops(road);
+    [stops] = await Promise.all([findStops(road), phosphorReady]);
   } catch {
     if (state.sel === road) el.innerHTML = `<span class="muted">Couldn't load stops right now (map servers busy).</span> <button class="link" id="stopsRetry">Try again</button>`;
     return;
@@ -1090,17 +1177,11 @@ async function loadStops(road) {
   el.innerHTML = `<details class="more" id="stopsMore"${state.stopsOpen ? " open" : ""}>
     <summary>Stops along the road <small>${withKm.length} place${withKm.length === 1 ? "" : "s"}: cafés, food, fuel</small></summary>
     <div class="stop-list">${withKm.slice(0, 12).map((st, i) =>
-    `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}">${st.icon} ${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("")}</div>
+    `<button class="stop" data-i="${i}" title="${esc(st.kind)}${st.name ? ": " + esc(st.name) : ""}"><i class="ph ph-${st.icon}"></i>${esc(st.name || st.kind)} <small>km ${km(st.d)}</small></button>`).join("")}</div>
   </details>`;
   $("#stopsMore").addEventListener("toggle", (e) => { state.stopsOpen = e.target.open; });
   el._stops = withKm;
-  map.getSource("stops").setData({
-    type: "FeatureCollection",
-    features: withKm.map((st, i) => ({
-      type: "Feature", properties: { icon: stopIcon(st.icon), i, label: st.name ? `${st.kind}: ${st.name}` : st.kind },
-      geometry: { type: "Point", coordinates: [st.lon, st.lat] },
-    })),
-  });
+  showStopsOnMap(withKm);
 }
 $("#dStops").addEventListener("click", (e) => {
   if (e.target.id === "stopsRetry") return loadStops(state.sel);
@@ -1113,9 +1194,9 @@ $("#dStops").addEventListener("click", (e) => {
 // ------------------------------------------------------------------ share
 
 $("#share").addEventListener("click", async () => {
-  const r = state.sel, v = state.view, fx = r.fx, btn = $("#share");
+  const r = state.sel, v = state.view, fx = r.fx, btn = $("#share"), label = btn.querySelector("span");
   btn.disabled = true;
-  btn.textContent = "Making image…";
+  label.textContent = "Making image…";
   let msg = "Share";
   try {
     const p = fx.parts;
@@ -1124,18 +1205,19 @@ $("#share").addEventListener("click", async () => {
       name: r.name,
       sub: [r.road, route(v.from, v.to)].filter(Boolean).join(" · "),
       score: r.score,
-      factors: `${p.bends.toFixed(1)} bends × (1 + ${(p.terrain - 1).toFixed(2)} terrain + ${(p.scenery - 1).toFixed(2)} scenery + ${(p.hairpins - 1).toFixed(2)} hairpins)`,
+      factors: [["Bends", p.bends.toFixed(1), p.bends / 12], [fx.rolling ? "Rolling" : "Terrain", `+${(p.terrain - 1).toFixed(2)}`, (p.terrain - 1) / 0.5],
+        ["Scenery", `+${(p.scenery - 1).toFixed(2)}`, (p.scenery - 1) / 0.5], ["Hairpins", `+${(p.hairpins - 1).toFixed(2)}`, p.hairpins - 1]],
       stats: [["Length", `${km(r.len)} km`], ["Hairpins", String(r.hairpins)], ["Climb", `↑${fmt(v.climb)} m`], ["Top", `${fmt(r.eleMax)} m`]],
       profile,
     });
     const res = await share(blob, `${r.name.replace(/[^\w\-]+/g, "_").toLowerCase()}.png`, `${r.name} · fun ${r.score}`, roadLink(r));
-    msg = { shared: "Shared ✓", cancelled: "Share", "saved+copied": "Image saved, link copied ✓", saved: "Image saved ✓" }[res];
+    msg = { shared: "Shared", cancelled: "Share", "saved+copied": "Image saved, link copied", saved: "Image saved" }[res];
   } catch {
     msg = "Couldn't make the image";
   }
-  btn.textContent = msg;
+  label.textContent = msg;
   btn.disabled = false;
-  setTimeout(() => { btn.textContent = "Share"; }, 3000);
+  setTimeout(() => { label.textContent = "Share"; }, 3000);
 });
 
 // ------------------------------------------------------------------ your rides (GPX)
@@ -1151,9 +1233,9 @@ function renderRides() {
     : "or drop GPX files anywhere on the page";
   const el = $("#rideChips");
   el.hidden = !rides.length;
-  el.innerHTML = rides.map((r) => `<span class="area-chip" data-key="${esc(r.key)}">
+  el.innerHTML = `<span class="chips-label">Your rides</span>` + rides.map((r) => `<span class="chip" data-key="${esc(r.key)}">
       <button class="area-go" title="Show on map">${esc(r.name)}</button>
-      <button class="area-x" title="Remove this ride" aria-label="Remove ${esc(r.name)}">✕</button></span>`).join("");
+      <button class="area-x x" title="Remove this ride" aria-label="Remove ${esc(r.name)}"><i class="ph ph-x"></i></button></span>`).join("");
 }
 
 function ridesChanged() {
@@ -1184,7 +1266,7 @@ async function importFiles(files) {
 $("#ridesBtn").addEventListener("click", () => $("#gpxFile").click());
 $("#gpxFile").addEventListener("change", (e) => { importFiles([...e.target.files]); e.target.value = ""; });
 $("#rideChips").addEventListener("click", (e) => {
-  const chip = e.target.closest(".area-chip");
+  const chip = e.target.closest(".chip");
   if (!chip) return;
   const ride = rides.find((r) => r.key === chip.dataset.key);
   if (e.target.closest(".area-x")) {
@@ -1213,12 +1295,14 @@ renderRides();
 
 // ------------------------------------------------------------------ weather at the top
 
+// [WMO codes, Phosphor icon, words]
 const WEATHER = [
-  [[0], "☀", "Clear"], [[1, 2], "⛅", "Partly cloudy"], [[3], "☁", "Overcast"], [[45, 48], "🌫", "Fog"],
-  [[51, 53, 55, 56, 57], "🌦", "Drizzle"], [[61, 63, 65, 66, 67], "🌧", "Rain"], [[71, 73, 75, 77], "❄", "Snow"],
-  [[80, 81, 82], "🌦", "Showers"], [[85, 86], "🌨", "Snow showers"], [[95, 96, 99], "⛈", "Thunderstorms"],
+  [[0], "sun", "Clear"], [[1, 2], "cloud-sun", "Partly cloudy"], [[3], "cloud", "Overcast"], [[45, 48], "cloud-fog", "Fog"],
+  [[51, 53, 55, 56, 57], "cloud-rain", "Drizzle"], [[61, 63, 65, 66, 67], "cloud-rain", "Rain"], [[71, 73, 75, 77], "snowflake", "Snow"],
+  [[80, 81, 82], "cloud-rain", "Showers"], [[85, 86], "cloud-snow", "Snow showers"], [[95, 96, 99], "cloud-lightning", "Thunderstorms"],
 ];
-const weatherOf = (code) => WEATHER.find(([codes]) => codes.includes(code)) ?? [[], "·", "—"];
+const weatherOf = (code) => WEATHER.find(([codes]) => codes.includes(code)) ?? [[], "cloud", "Unknown"];
+const wIcon = (name) => `<i class="ph ph-${name} w-ic"></i>`;
 const weatherCache = new Map();
 
 /** Wind chill at riding speed (Environment Canada formula; only meaningful when it's cool). */
@@ -1255,14 +1339,14 @@ async function loadWeather(road) {
     const name = i === 0 ? "Today" : new Date(day + "T12:00").toLocaleDateString("en", { weekday: "short" });
     const snow = d.snowfall_sum[i] > 0.2 ? ` · ${d.snowfall_sum[i].toFixed(0)} cm snow` : "";
     return `<div class="w-day" title="${lb}${snow} · gusts ${Math.round(d.wind_gusts_10m_max[i])} km/h · sunset ${d.sunset[i].slice(11)}">
-      <span>${name}</span><span class="w-ic">${ic}</span>
+      <span>${name}</span>${wIcon(ic)}
       <span>${Math.round(d.temperature_2m_max[i])}° <small>${Math.round(d.temperature_2m_min[i])}°</small></span>
       <small>${d.precipitation_probability_max[i] ?? 0}% rain</small></div>`;
   }).join("");
   el.innerHTML = `
     <div class="w-head">At the top · ${fmt(top[2])} m</div>
-    <div class="w-now"><span class="w-ic">${icon}</span><b>${Math.round(c.temperature_2m)}°</b>
-      <span>${label}${fl != null ? ` · feels ${Math.round(fl)}° at ${RIDING_SPEED} km/h` : ""} · wind ${Math.round(c.wind_speed_10m)} km/h</span></div>
+    <div class="w-now">${wIcon(icon)}<b>${Math.round(c.temperature_2m)}°</b>
+      <span>${label}${fl != null ? `, feels ${Math.round(fl)}° at ${RIDING_SPEED} km/h` : ""}, wind ${Math.round(c.wind_speed_10m)} km/h</span></div>
     <div class="w-days">${days}</div>`;
 }
 
@@ -1273,17 +1357,35 @@ function renderLegend() {
   if (state.sel) {
     el.innerHTML = `Bend tightness<div class="keys">${BEND_NAMES.map((n, i) =>
       `<span title="${BEND_RADII[i]}"><i style="--c:var(--c${i})"></i>${n}</span>`).join("")}</div>
-      <div class="keys"><span><i class="glow"></i>Hot spot</span><span><b class="star">★</b> Best bit</span></div>`;
+      <div class="keys"><span><i class="glow"></i>Hot spot</span><span><i class="ph-fill ph-star star"></i> Best bit</span></div>`;
   } else {
     el.innerHTML = `Fun score
       <div class="ramp" style="background:linear-gradient(90deg,var(--s1),var(--s2),var(--s3),var(--s4))"></div>
-      <div class="ends"><span>mild</span><span>wild</span></div>`;
+      <div class="ends"><span>Mild</span><span>Wild</span></div>`;
   }
 }
 renderLegend();
 
 $("#aboutBtn").addEventListener("click", () => $("#about").showModal());
 $("#about").addEventListener("click", (e) => { if (e.target === e.currentTarget || e.target.closest(".about-close")) $("#about").close(); });
+
+// ------------------------------------------------------------------ day / night
+
+function renderThemeBtn() {
+  const night = theme() === "night";
+  $("#themeBtn").innerHTML = `<i class="ph ${night ? "ph-moon-stars" : "ph-sun-dim"}"></i><span>${night ? "Night" : "Day"}</span>`;
+  document.querySelector('meta[name="theme-color"]').content = night ? "#101c27" : "#fbfcfd";
+}
+renderThemeBtn();
+$("#themeBtn").addEventListener("click", async () => {
+  const t = theme() === "night" ? "day" : "night";
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("twisty.theme", t); } catch { /* private mode */ }
+  renderThemeBtn();
+  renderLegend();
+  if (state.sel) drawProfile();
+  map.setStyle(await fetchStyle(t), { diff: false });       // style.load re-adds our layers in the new colours
+});
 
 // ------------------------------------------------------------------ 3D controls
 
@@ -1326,14 +1428,14 @@ function drawProfile() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
 
-  const M = { l: 44, r: 8, t: 16, b: 20 };
+  const M = { l: 56, r: 8, t: 16, b: 20 };
   const lo = v.road.eleMin, hi = v.road.eleMax;
   const eStep = niceStep(hi - lo || 50, 3);
   const e0 = Math.floor(lo / eStep) * eStep, e1 = Math.ceil(hi / eStep) * eStep || e0 + eStep;
   const X = (d) => M.l + (d / v.total) * (W - M.l - M.r);
   const Y = (e) => H - M.b - ((e - e0) / (e1 - e0)) * (H - M.t - M.b);
 
-  g.font = "11px system-ui, sans-serif";
+  g.font = '11px "Geist Mono", ui-monospace, monospace';
   g.fillStyle = css("--muted");
   g.strokeStyle = css("--line");
   g.lineWidth = 1;
@@ -1382,7 +1484,7 @@ function drawProfile() {
     g.beginPath(); g.arc(px, py, 3.5, 0, Math.PI * 2); g.fill();
     g.textAlign = px > W - 120 ? "right" : px < M.l + 120 ? "left" : "center";
     g.textBaseline = "bottom";
-    g.font = "600 11px system-ui, sans-serif";
+    g.font = '500 11px "Geist", system-ui, sans-serif';
     g.fillText(`${ps.name} ${fmt(ps.ele)} m`, px, py - 6);
   }
 
@@ -1424,7 +1526,7 @@ function setCursor(d) {
 
 function profileD(e) {
   const r = canvas.getBoundingClientRect();
-  return clamp((e.clientX - r.left - 44) / (r.width - 52), 0, 1) * state.view.total;
+  return clamp((e.clientX - r.left - 56) / (r.width - 64), 0, 1) * state.view.total;
 }
 canvas.addEventListener("pointermove", (e) => { if (!fly) setCursor(profileD(e)); });
 canvas.addEventListener("pointerleave", () => { if (!fly) setCursor(null); });
@@ -1447,13 +1549,13 @@ function startFly() {
   const start = v.at(0);
   let cam = bearing(start, v.at(300));
   fly = { raf: 0 };
-  $("#fly").textContent = "■ Stop";
+  $("#fly").innerHTML = '<i class="ph ph-stop"></i><span>Stop</span>';
   showRider(start);
 
   // pin the camera to the road's own height so the rider stays centred even before terrain tiles arrive
   map.setCenterClampedToGround(false);
   map.easeTo({ center: [start[0], start[1]], elevation: start[2] * state.exag, zoom: 14.3, pitch: 65, bearing: cam, duration: 1600,
-    padding: { top: 0, left: 0, right: 0, bottom: innerWidth <= 760 ? 0 : $("#detail").offsetHeight } });  // keep the rider above the card
+    padding: { top: 0, left: 0, right: 0, bottom: 0 } });
   map.once("moveend", () => {
     if (!fly) return;
     let t0 = null;
@@ -1482,7 +1584,7 @@ function stopFly() {
   fly = null;
   map.setCenterClampedToGround(true);
   map.setPadding({ top: 0, left: 0, right: 0, bottom: 0 });
-  $("#fly").textContent = "▶ Fly along";
+  $("#fly").innerHTML = '<i class="ph ph-play"></i><span>Fly along</span>';
 }
 
 $("#fly").addEventListener("click", () => (fly ? stopFly() : startFly()));

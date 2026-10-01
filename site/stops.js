@@ -1,9 +1,10 @@
 /* Places to stop along a road: cafés, food, huts and fuel within 200 m, from OpenStreetMap (one query per road). */
 import { overpassServers } from "./core/twisty.js";
 
+// [OSM tag, Phosphor icon name, label]
 const KINDS = [
-  ["cafe", "☕", "Café"], ["restaurant", "🍽", "Restaurant"], ["fast_food", "🍔", "Snack"], ["ice_cream", "🍦", "Ice cream"],
-  ["biergarten", "🍺", "Beer garden"], ["pub", "🍺", "Pub"], ["fuel", "⛽", "Fuel"], ["alpine_hut", "🏠", "Mountain hut"],
+  ["cafe", "coffee", "Café"], ["restaurant", "fork-knife", "Restaurant"], ["fast_food", "hamburger", "Snack"], ["ice_cream", "ice-cream", "Ice cream"],
+  ["biergarten", "beer-stein", "Beer garden"], ["pub", "beer-stein", "Pub"], ["fuel", "gas-pump", "Fuel"], ["alpine_hut", "house-line", "Mountain hut"],
 ];
 const cache = new Map();
 
@@ -30,7 +31,7 @@ out center 80;`;
   if (!data) throw new Error("busy");
   const stops = data.elements.map((el) => {
     const t = el.tags || {};
-    const [, icon, kind] = KINDS.find(([k]) => t.amenity === k || t.tourism === k) || [null, "📍", "Stop"];
+    const [, icon, kind] = KINDS.find(([k]) => t.amenity === k || t.tourism === k) || [null, "map-pin", "Stop"];
     return { lon: el.lon ?? el.center?.lon, lat: el.lat ?? el.center?.lat, icon, kind, name: t.name || null };
   }).filter((s) => Number.isFinite(s.lon))
     // the same place is often mapped twice (a point and a building outline): keep one per name within ~100 m

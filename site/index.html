@@ -5,80 +5,134 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Twisty Roads</title>
   <meta name="description" content="Find the most fun roads anywhere: every paved road scored on its bends, hairpins and climb, on a 3D terrain map.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26c6 0 6-8 12-8s4-12 12-12' fill='none' stroke='%23d94801' stroke-width='4' stroke-linecap='round'/></svg>">
+  <meta name="theme-color" content="#101c27">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23f26b1d'/><path d='M7 24c5 0 5-7 9.5-7S19 8 25 8' fill='none' stroke='%23101c27' stroke-width='3.5' stroke-linecap='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // pick the theme before anything draws: your choice, else the system's
+    try { document.documentElement.dataset.theme = localStorage.getItem("twisty.theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "day" : "night"); }
+    catch { document.documentElement.dataset.theme = "night"; }
+  </script>
 </head>
 <body>
   <div class="app">
-    <aside class="panel">
+    <aside class="panel" id="panel">
       <header class="brand">
+        <span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 24c5 0 5-7 9.5-7S19 8 25 8" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg></span>
         <h1>Twisty Roads</h1>
-        <p>The most fun roads anywhere, scored on their bends, hairpins and climb. <button id="aboutBtn" class="link">How it's scored</button></p>
+        <button id="aboutBtn" class="quiet">How it's scored</button>
       </header>
 
-      <form id="scanForm" class="explore">
-        <div class="row">
-          <input id="place" type="search" placeholder="Explore a town or area…" autocomplete="off" aria-label="Town or area to explore">
-          <select id="radius" aria-label="Search radius">
+      <!-- browsing: search, scan, taste, filters, list -->
+      <div class="browse" id="browse">
+        <form id="scanForm" class="search">
+          <label class="field">
+            <i class="ph ph-magnifying-glass"></i>
+            <input id="search" type="search" placeholder="Search roads or a place" autocomplete="off" aria-label="Filter roads, or type a place and press Scan">
+          </label>
+          <select id="radius" aria-label="Scan radius">
             <option value="20">20 km</option>
             <option value="30" selected>30 km</option>
             <option value="60">60 km</option>
             <option value="100">100 km</option>
           </select>
-          <button id="scanGo" class="btn primary" type="submit">Find</button>
-        </div>
-        <div class="explore-tools">
-          <button id="nearMe" class="tool-link" type="button" title="Scan around your current location">Near me</button>
-          <button id="scanView" class="tool-link" type="button" title="Scan around the centre of the map">Map view</button>
-          <button id="ridesBtn" class="tool-link" type="button" title="Import rides recorded on your phone or bike computer, or drop GPX files anywhere">Import rides</button>
-          <span id="ridesInfo" class="rides-info"></span>
+          <button id="scanGo" class="btn primary" type="submit">Scan</button>
+        </form>
+        <div class="tools">
+          <button id="nearMe" class="tool-link" type="button" title="Scan around your current location"><i class="ph ph-crosshair"></i>Near me</button>
+          <button id="scanView" class="tool-link" type="button" title="Scan around the centre of the map"><i class="ph ph-map-trifold"></i>Map view</button>
+          <button id="ridesBtn" class="tool-link" type="button" title="Import rides recorded on your phone or bike computer, or drop GPX files anywhere"><i class="ph ph-path"></i>Import rides</button>
         </div>
         <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml" multiple hidden>
         <p id="scanStatus" class="scan-status" hidden></p>
-        <div id="areas" class="areas" hidden></div>
-        <div id="rideChips" class="areas" hidden></div>
-      </form>
+        <p id="ridesInfo" class="rides-info"></p>
+        <div id="areas" class="chips" hidden></div>
+        <div id="rideChips" class="chips" hidden></div>
 
-      <div class="controls">
-        <label class="taste">
-          <span class="taste-head">Your taste <b id="tasteLabel"></b></span>
-          <input id="taste" type="range" min="0" max="100" step="5" value="50" aria-label="Taste, from fast sweepers to tight hairpins">
-          <span class="taste-ends"><span>Sweepers</span><span>Hairpins</span></span>
-        </label>
-        <div id="tune" class="tune"></div>
-        <input id="search" type="search" placeholder="Filter by road, pass or town" autocomplete="off" aria-label="Filter roads">
+        <div class="tune-row">
+          <label class="taste">
+            <span class="taste-head">Taste <b id="tasteLabel"></b></span>
+            <input id="taste" type="range" min="0" max="100" step="5" value="50" aria-label="Taste, from fast sweepers to tight hairpins">
+            <span class="taste-ends"><span>Sweepers</span><span>Hairpins</span></span>
+          </label>
+          <div id="tune" class="tune"></div>
+        </div>
+
         <div class="filters">
           <select id="sort" aria-label="Sort by">
-              <option value="score">Fun score</option>
-              <option value="bit">Best 5 km</option>
-              <option value="scenery">Scenery</option>
-              <option value="inBends">Share in bends</option>
-              <option value="hairpins">Hairpins</option>
-              <option value="climb">Climb</option>
-              <option value="eleMax">Highest point</option>
-              <option value="len">Length</option>
+            <option value="score">Fun score</option>
+            <option value="bit">Best 5 km</option>
+            <option value="scenery">Scenery</option>
+            <option value="inBends">Share in bends</option>
+            <option value="hairpins">Hairpins</option>
+            <option value="climb">Climb</option>
+            <option value="eleMax">Highest point</option>
+            <option value="len">Length</option>
           </select>
           <select id="show" aria-label="Show">
             <option value="all">All roads</option>
             <option value="passes">Passes only</option>
-            <option value="fav">★ Favourites</option>
+            <option value="fav">Favourites</option>
             <option value="unridden">Not ridden yet</option>
-            <option value="ridden">✓ Ridden</option>
+            <option value="ridden">Ridden</option>
             <option value="rated">Rated by you</option>
           </select>
-          <label class="chip" title="Only list roads in the map view"><input id="inView" type="checkbox" checked> In view</label>
+          <label class="check" title="Only list roads in the map view"><input id="inView" type="checkbox" checked> In view</label>
         </div>
+        <p id="count" class="count"></p>
+        <ol id="list" class="list"></ol>
       </div>
 
-      <p id="count" class="count"></p>
-      <ol id="list" class="list"></ol>
+      <!-- one road -->
+      <section id="detail" class="detail" hidden>
+        <button id="close" class="back"><i class="ph ph-arrow-left"></i>All roads</button>
+        <h2><span id="dName"></span> <span id="dRidden" class="ridden-badge" hidden title="You've ridden this (from your imported rides)"><i class="ph ph-check-circle"></i>Ridden</span></h2>
+        <p id="dSub" class="sub"></p>
+        <div id="dWarn" class="warn" hidden></div>
+        <div id="dFun" class="fun"></div>
+        <div class="actions">
+          <button id="fly" class="btn primary"><i class="ph ph-play"></i><span>Fly along</span></button>
+          <a id="nav" class="btn" target="_blank" rel="noopener"><i class="ph ph-navigation-arrow"></i>Navigate</a>
+        </div>
+        <div class="actions icons">
+          <button id="fav" class="icon-btn" title="Add to favourites"><i class="ph ph-star"></i></button>
+          <button id="yay" class="icon-btn" title="Yay: I like this road"><i class="ph ph-thumbs-up"></i></button>
+          <button id="nay" class="icon-btn" title="Nay: not for me"><i class="ph ph-thumbs-down"></i></button>
+          <span class="gap"></span>
+          <button id="reverse" class="icon-btn" title="Ride it the other way"><i class="ph ph-arrows-left-right"></i></button>
+          <button id="gpx" class="icon-btn" title="Download as GPX"><i class="ph ph-download-simple"></i></button>
+          <button id="share" class="icon-btn wide" title="Share as an image and a link"><i class="ph ph-share-network"></i><span>Share</span></button>
+        </div>
+        <dl id="dStats" class="stats"></dl>
+        <div class="block">
+          <h3>Elevation</h3>
+          <div class="profile-wrap">
+            <canvas id="profile"></canvas>
+            <div id="pTip" class="ptip" hidden></div>
+          </div>
+          <div class="profile-legend">
+            <span>Gradient</span>
+            <i style="--c:var(--g1)"></i>under 4%
+            <i style="--c:var(--g2)"></i>4-7%
+            <i style="--c:var(--g3)"></i>7-10%
+            <i style="--c:var(--g4)"></i>10%+
+          </div>
+        </div>
+        <div id="dWeather" class="block weather"></div>
+        <div id="dStops" class="block stops" hidden></div>
+      </section>
 
       <footer class="credits">
         Roads © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors ·
-        Terrain: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> ·
-        Map: <a href="https://openfreemap.org">OpenFreeMap</a> ·
-        Weather: <a href="https://open-meteo.com">Open-Meteo</a> ·
+        Terrain <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a> ·
+        Map <a href="https://openfreemap.org">OpenFreeMap</a> ·
+        Weather <a href="https://open-meteo.com">Open-Meteo</a> ·
         <a href="https://github.com/vehiculardesire/twisty-roads">Source</a>
       </footer>
     </aside>
@@ -87,62 +141,23 @@
       <div id="map"></div>
 
       <div class="map-tools">
-        <button id="toggle3d" class="tool on" aria-pressed="true" title="Toggle 3D terrain">3D</button>
+        <button id="toggle3d" class="tool on" aria-pressed="true" title="Toggle 3D terrain"><i class="ph ph-mountains"></i>3D</button>
         <label class="tool exag" title="Terrain exaggeration">
           <span>Relief</span>
           <input id="exag" type="range" min="1" max="2.5" step="0.1" value="1.4">
         </label>
+        <button id="themeBtn" class="tool" title="Switch day and night"><i class="ph ph-moon-stars"></i><span>Night</span></button>
       </div>
 
       <div id="legend" class="legend"></div>
       <div id="tip" class="tip" hidden></div>
-
-      <section id="detail" class="detail" hidden>
-        <div class="detail-head">
-          <div>
-            <h2><span id="dName"></span> <span id="dRidden" class="ridden-badge" hidden title="You've ridden this (from your imported rides)">✓ ridden</span></h2>
-            <p id="dSub" class="sub"></p>
-          </div>
-          <div class="actions">
-            <button id="fav" class="btn icon" title="Add to favourites">☆</button>
-            <span class="rate">
-              <button id="yay" class="btn icon" title="Yay: I like this road">👍</button>
-              <button id="nay" class="btn icon" title="Nay: not for me">👎</button>
-            </span>
-            <button id="fly" class="btn primary">▶ Fly along</button>
-            <button id="reverse" class="btn" title="Ride it the other way">⇄</button>
-            <a id="nav" class="btn" target="_blank" rel="noopener">Navigate</a>
-            <button id="gpx" class="btn">GPX</button>
-            <button id="share" class="btn" title="Share as an image and a link">Share</button>
-            <button id="close" class="btn icon" aria-label="Close">✕</button>
-          </div>
-        </div>
-        <div class="detail-body">
-          <div id="dFun" class="fun"></div>
-          <dl id="dStats" class="stats"></dl>
-          <div id="dWeather" class="weather"></div>
-        </div>
-        <div id="dWarn" class="warn" hidden></div>
-        <div id="dStops" class="stops" hidden></div>
-        <div class="profile-wrap">
-          <canvas id="profile"></canvas>
-          <div id="pTip" class="ptip" hidden></div>
-        </div>
-        <div class="profile-legend">
-          <span>Gradient</span>
-          <i style="--c:var(--g1)"></i>&lt;4%
-          <i style="--c:var(--g2)"></i>4–7%
-          <i style="--c:var(--g3)"></i>7–10%
-          <i style="--c:var(--g4)"></i>≥10%
-        </div>
-      </section>
     </main>
   </div>
 
-  <div id="drop" class="drop" hidden><div>Drop GPX files to import your rides</div></div>
+  <div id="drop" class="drop" hidden><div><i class="ph ph-path"></i>Drop GPX files to import your rides</div></div>
 
   <dialog id="about" class="about">
-    <button class="about-close btn icon" aria-label="Close">✕</button>
+    <button class="about-close icon-btn" aria-label="Close"><i class="ph ph-x"></i></button>
     <h2>What makes a road fun?</h2>
     <p>Every paved road in OpenStreetMap is measured every 10 metres. A road is scored on <b>its best stretch</b>
       (up to 15 km), so a great pass isn't dragged down by the valley road leading to it. Its bends are the base,

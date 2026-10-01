@@ -10,9 +10,11 @@ A static site with no backend, no accounts and no API keys, hosted free on GitHu
 ## What it does
 
 - **Ranks roads** by a fun score, with a **taste slider** from fast sweepers to tight hairpins.
-- **Scans anywhere.** Type a town, or use *Near me* or *Map view*. Your browser downloads that area's roads and
-  terrain and scores them on the spot (20 s to 2 min, depending on the public map servers). Scans are saved and
-  shareable. The Geneva region is built in, so the site opens instantly.
+- **The Western Alps and the Jura are built in** (from Nice to the Stelvio, and from the Jura to Lake Como), loaded a tile at a time as
+  you move the map, so the site opens instantly. Zoomed out, the map only draws the better roads.
+- **Scans anywhere else.** Type a town, or use *Near me* or *Map view*, and pick 20 to 100 km. Your browser
+  downloads that area's roads and terrain and scores them on the spot (under a minute for 30 km; a few minutes
+  for 100 km, longer when the public map servers are busy). Scans are saved and shareable.
 - **Shows each road in detail:**
   - bend-by-bend colouring on a smooth line
   - glowing hot spots and a ★ on the best bit
@@ -103,7 +105,8 @@ site/rides.js         GPX import and ridden matching
 site/stops.js         cafés, food and fuel along a road
 site/share.js         the share card
 site/db.js            browser storage for scans and rides
-tools/                Node script that pre-builds the built-in region (tools/region.json)
+tools/                Node scripts that pre-build the Western Alps tiles (tools/region.json)
+site/data/            the pre-built tiles + index.json (which tile holds which road)
 ```
 
 Run it locally:
@@ -112,15 +115,19 @@ Run it locally:
 python -m http.server 8765 --directory site
 ```
 
-Rebuild the built-in region (Node 20+; about 30 Overpass queries, so be patient):
+Rebuild the pre-built tiles (Node 20+; about 80 Overpass queries, so be patient). Download each tile, then score
+them all:
 
 ```bash
-node tools/build-region.mjs
+node tools/fetch-tile.mjs 46_6
+node tools/build-tiles.mjs
 ```
 
 **Deploy:** push to `main`.
 - `pages.yml` publishes `site/` to GitHub Pages whenever the site changes.
-- `refresh-data.yml` rebuilds the built-in region monthly and whenever the engine changes, then redeploys.
+- `refresh-data.yml` rebuilds the tiles on 1 March and 1 September, when `tools/` changes, or by hand from the
+  Actions tab, then redeploys. Each tile downloads in its own job: if the map servers fail one, *Re-run failed
+  jobs* redoes just that tile.
 
 ## Data & credits
 

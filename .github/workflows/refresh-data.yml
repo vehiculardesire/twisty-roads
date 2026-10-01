@@ -1,14 +1,17 @@
 name: Refresh road data
 
-# Rebuilds the built-in region (site/data/home.json) from fresh OpenStreetMap data with the same engine
-# the site uses: monthly, when the engine changes, or by hand from the Actions tab.
+# Rebuilds the pre-built Western Alps tiles (site/data/) from fresh OpenStreetMap data with the same engine the site
+# uses: twice a year (1 March and 1 September), when the build tools change, or by hand from the Actions tab.
+# Each tile downloads in its own job, so if the public Overpass servers fail one, "Re-run failed jobs" redoes just
+# that tile. Scoring changes in site/core don't need a rebuild (the site re-scores from the stored bends), but a
+# change to how roads are measured (an ALGO_VERSION bump) does: run this by hand then.
 on:
   schedule:
-    - cron: "0 3 1 * *"
+    - cron: "0 3 1 3,9 *"
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["site/core/**", "tools/**"]
+    paths: ["tools/**"]
 
 permissions:
   contents: write
@@ -18,20 +21,56 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  tiles:
     runs-on: ubuntu-latest
-    timeout-minutes: 240          # the public Overpass servers can be slow
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: echo "list=$(jq -c .tiles tools/region.json)" >> "$GITHUB_OUTPUT"
+
+  fetch:
+    needs: tiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 150          # the public Overpass servers can be slow
+    strategy:
+      fail-fast: false
+      max-parallel: 2             # be polite to the public servers
+      matrix:
+        tile: ${{ fromJson(needs.tiles.outputs.list) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: node tools/build-region.mjs
+      - run: node tools/fetch-tile.mjs ${{ matrix.tile }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osm-${{ matrix.tile }}
+          path: osm/${{ matrix.tile }}.json
+          retention-days: 5
+
+  build:
+    needs: fetch
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: osm-*
+          path: osm
+          merge-multiple: true
+      - run: node --max-old-space-size=8192 tools/build-tiles.mjs
       - name: Commit if changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add site/data/home.json
+          git add -A site/data
           if git diff --cached --quiet; then echo "No changes"; exit 0; fi
           git commit -m "Refresh road data"
           git pull --rebase

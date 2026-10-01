@@ -22,10 +22,15 @@ const BEND_NAMES = ["Straight", ...BENDS.map(([, n]) => n)];
 const BEND_RADII = ["", ...BENDS.map(([r]) => `under ${r} m radius`)];
 const RIDING_SPEED = 80;   // km/h, for "feels like"
 
-// ------------------------------------------------------------------ data: built-in region + saved scans
+// ------------------------------------------------------------------ data: pre-built tiles + saved scans
 
-const [home, baseStyle, savedAreas, savedRides] = await Promise.all([
-  fetch("data/home.json").then((r) => r.json()),
+// The pre-built region comes in 1° tiles, loaded as the map shows them. index.json says which tile holds which road.
+const index = await fetch("data/index.json").then((r) => r.json());
+const tileOf = new Map(Object.entries(index.ids).flatMap(([k, ids]) => ids.split(",").map((id) => [id, k])));
+const boxesMeet = ([s, w, n, e], [s2, w2, n2, e2]) => s <= n2 && n >= s2 && w <= e2 && e >= w2;
+const tilesIn = (box) => index.tiles.filter((t) => boxesMeet(t.bbox, box)).map((t) => t.key);
+
+const [baseStyle, savedAreas, savedRides] = await Promise.all([
   fetch("https://tiles.openfreemap.org/styles/positron").then((r) => r.json()),
   idb("areas", "getAll").catch(() => []),
   loadRides(),
@@ -42,50 +47,93 @@ const state = {
 };
 
 let roads = [], passes = [], byId = new Map();
+const tiles = new Map();          // loaded pre-built tiles: key -> { roads, passes }
 let areas = [];                   // saved scans, newest last
 let rides = savedRides;           // your imported GPX rides
 let ridden = new Set();           // ids of roads you've ridden (from those rides)
-addArea({ key: "home", roads: home.roads, passes: home.passes, bbox: home.bbox });
-for (const a of savedAreas.filter((a) => a.v === ALGO_VERSION).sort((a, b) => a.date - b.date)) addArea(a);
+const midIn = ([s, w, n, e], r) => { const [lo, la] = r.coords[r.coords.length >> 1]; return la > s && la < n && lo > w && lo < e; };
 
-/** Merge an area's roads in, replacing whatever we had inside its box. */
-function addArea(area) {
-  const [s, w, n, e] = area.bbox;
-  const inBox = (r) => { const [lo, la] = r.coords[r.coords.length >> 1]; return la > s && la < n && lo > w && lo < e; };
-  if (area.key !== "home") {
-    roads = roads.filter((r) => r.area !== area.key && !inBox(r));
-    areas = [...areas.filter((a) => a.key !== area.key), area];
-  }
-  for (const r of area.roads) {
-    r.area = area.key;
+function prep(list, key) {
+  for (const r of list) {
+    r.area = key;
     const lons = r.coords.map((c) => c[0]), lats = r.coords.map((c) => c[1]);
     r.bb = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
     r.inBends = r.bends.reduce((a, b) => a + b, 0) / (r.len / 1000);   // share of the road that's bends
   }
-  roads.push(...area.roads);
-  const known = new Set(passes.map((p) => `${p.lon},${p.lat}`));
-  passes.push(...area.passes.filter((p) => !known.has(`${p.lon},${p.lat}`)));
+}
+
+/** Fetch pre-built tiles we don't have yet. Returns whether anything new arrived. */
+const tileLoads = new Map();
+async function loadTiles(keys, refresh = true) {
+  const todo = [...new Set(keys)].filter((k) => k && !tiles.has(k) && !tileLoads.has(k));
+  if (!todo.length) return false;
+  await Promise.all(todo.map((k) => {
+    const p = fetch(`data/tiles/${k}.json`).then((r) => r.json()).then((t) => {
+      if (t.version !== ALGO_VERSION) return;
+      prep(t.roads, `t:${k}`);
+      tiles.set(k, t);
+    }).catch(() => {}).finally(() => tileLoads.delete(k));
+    tileLoads.set(k, p);
+    return p;
+  }));
+  if (refresh) { rebuild(); refreshMapData(); renderRides(); }
+  return true;
+}
+
+/**
+ * Put the road list together: pre-built tiles first, then your scans on top (a scan replaces whatever was inside
+ * its box, and a newer scan replaces an older one where they overlap).
+ */
+function rebuild() {
+  roads = [];
+  for (const t of tiles.values()) roads.push(...t.roads.filter((r) => !areas.some((a) => midIn(a.bbox, r))));
+  areas.forEach((a, i) => roads.push(...a.roads.filter((r) => !areas.slice(i + 1).some((b) => midIn(b.bbox, r)))));
+  const seen = new Set();
+  passes = [...tiles.values(), ...areas].flatMap((t) => t.passes).filter((p) => {
+    const k = `${p.lon},${p.lat}`;
+    return !seen.has(k) && seen.add(k);
+  });
   rescore();
   ridden = riddenRoads(roads, rides);
 }
 
+/** Add (or replace) a scan. */
+function addArea(area, refresh = true) {
+  prep(area.roads, area.key);
+  areas = [...areas.filter((a) => a.key !== area.key), area];
+  if (refresh) rebuild();
+}
+
 function removeArea(key) {
-  roads = roads.filter((r) => r.area !== key);
   areas = areas.filter((a) => a.key !== key);
   idb("areas", "delete", key).catch(() => {});
-  rescore();
+  rebuild();
   refreshMapData();
   renderAreas();
 }
 
+/** Scores for your taste. Roads already scored for the current taste are skipped, so loading a tile stays quick. */
 function rescore() {
+  const mix = currentMix(), key = `${state.taste}|${JSON.stringify(mix)}`;
   for (const r of roads) {
-    r.fx = scoreRoad(r, state.taste, currentMix());   // score + best stretch + hot spots, for your taste
+    if (r.scoredFor === key) continue;
+    r.fx = scoreRoad(r, state.taste, mix);   // score + best stretch + hot spots, for your taste
     r.score = r.fx.score;
     r.scenery = r.fx.scenery.score;
+    r.scoredFor = key;
   }
   byId = new Map(roads.map((r) => [r.id, r]));
 }
+
+for (const a of savedAreas.filter((a) => a.v === ALGO_VERSION).sort((a, b) => a.date - b.date)) addArea(a, false);
+// Before the first draw: the tiles in the start view, and those holding your favourites, ratings, rides and a linked road.
+const linked = location.hash.match(/road=(\w+)/)?.[1];
+const rideBoxes = rides.map((r) => { const lo = r.points.map((p) => p[0]), la = r.points.map((p) => p[1]); return [Math.min(...la), Math.min(...lo), Math.max(...la), Math.max(...lo)]; });
+await loadTiles([
+  ...tilesIn(index.start), ...rideBoxes.flatMap(tilesIn),
+  ...[...Object.keys(me.fav), ...Object.keys(me.rate), linked].map((id) => tileOf.get(id)),
+], false);
+rebuild();
 
 // ------------------------------------------------------------------ geometry helpers
 
@@ -226,7 +274,7 @@ function bendRuns(v) {
 const map = new maplibregl.Map({
   container: "map",
   style: baseStyle,
-  bounds: [[home.bbox[1], home.bbox[0]], [home.bbox[3], home.bbox[2]]],
+  bounds: [[index.start[1], index.start[0]], [index.start[3], index.start[2]]],
   fitBoundsOptions: { padding: 20 },
   pitch: 40,
   maxPitch: 80,
@@ -420,11 +468,18 @@ mapReady.then(() => {
   });
 
   let moveTimer;
-  map.on("moveend", () => { clearTimeout(moveTimer); moveTimer = setTimeout(() => state.inView && renderList(), 120); });
+  map.on("moveend", () => {
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(async () => {
+      if (minScore() !== shownMin) setMapFilter();
+      if (!(await loadTiles(tilesIn(viewBox(0.25)))) && state.inView) renderList();
+    }, 120);
+  });
 
   applyFilter();
   const scanArg = location.hash.match(/scan=(-?[\d.]+),(-?[\d.]+),(\d+)/);
   const roadArg = location.hash.match(/road=(\w+)/);
+  loadTiles(tilesIn(viewBox(0.25)));
   if (scanArg && !areas.some((a) => a.key === areaKey(+scanArg[1], +scanArg[2], +scanArg[3]))) {
     runScan(+scanArg[1], +scanArg[2], +scanArg[3], null, roadArg?.[1]);
   } else if (roadArg && byId.has(roadArg[1])) {
@@ -438,9 +493,15 @@ function roadsGeoJSON() {
     features: roads.map((r) => ({
       type: "Feature",
       properties: { id: r.id, score: r.score },
-      geometry: { type: "LineString", coordinates: r.coords.map((c) => [c[0], c[1]]) },
+      geometry: (r.line ||= { type: "LineString", coordinates: r.coords.map((c) => [c[0], c[1]]) }),
     })),
   };
+}
+
+/** The map view as [south, west, north, east], grown by `grow` of its size on each side. */
+function viewBox(grow = 0) {
+  const b = map.getBounds(), dy = (b.getNorth() - b.getSouth()) * grow, dx = (b.getEast() - b.getWest()) * grow;
+  return [b.getSouth() - dy, b.getWest() - dx, b.getNorth() + dy, b.getEast() + dx];
 }
 
 function passesGeoJSON() {
@@ -489,7 +550,7 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
       roads: msg.roads, passes: msg.passes,
     };
     addArea(area);
-    idb("areas", "put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, ...r }) => r) }).catch(() => {});
+    idb("areas", "put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, line: _l, scoredFor: _k, ...r }) => r) }).catch(() => {});
     refreshMapData();
     renderAreas();
 
@@ -597,13 +658,21 @@ function inViewport(r) {
   return !(r.bb[0] > b.getEast() || r.bb[2] < b.getWest() || r.bb[1] > b.getNorth() || r.bb[3] < b.getSouth());
 }
 
+/** Zoomed out, the map only draws the better roads (the list still has them all). */
+const minScore = () => (map.getZoom() < 7.5 ? 45 : map.getZoom() < 8.5 ? 30 : 0);
+let shownMin = 0;
+
+function setMapFilter() {
+  if (!map.getLayer("roads")) return;
+  shownMin = minScore();
+  const f = ["all", ["in", ["get", "id"], ["literal", matchingRoads().map((r) => r.id)]], [">=", ["get", "score"], shownMin]];
+  map.setFilter("roads", f);
+  map.setFilter("roads-casing", f);
+}
+
 /** Map shows everything that matches the search; the list can also be limited to the map view. */
 function applyFilter() {
-  if (map.getLayer("roads")) {
-    const f = ["in", ["get", "id"], ["literal", matchingRoads().map((r) => r.id)]];
-    map.setFilter("roads", f);
-    map.setFilter("roads-casing", f);
-  }
+  setMapFilter();
   renderList();
 }
 
@@ -612,7 +681,8 @@ function renderList() {
   if (state.inView) list = list.filter(inViewport);
   const k = state.sort;
   list.sort((a, b) => (b[k] ?? 0) - (a[k] ?? 0));
-  $("#count").textContent = state.inView ? `${list.length} roads in view` : `${list.length} roads`;
+  $("#count").textContent = (state.inView ? `${list.length} roads in view` : `${list.length} roads`)
+    + (shownMin ? ` · map shows ${shownMin}+ at this zoom` : "");
   $("#list").innerHTML = list.slice(0, 300).map((r, i) => `
     <li class="item${state.sel?.id === r.id ? " active" : ""}" data-id="${r.id}">
       <span class="rank">${i + 1}</span>
@@ -902,7 +972,7 @@ ${pts}
 /** Link that opens this road for anyone: roads from a scan carry the scan, so the recipient's browser re-runs it. */
 function roadLink(road) {
   const base = location.origin + location.pathname;
-  return road.area && road.area !== "home" ? `${base}#scan=${road.area}&road=${road.id}` : `${base}#road=${road.id}`;
+  return road.area && !road.area.startsWith("t:") ? `${base}#scan=${road.area}&road=${road.id}` : `${base}#road=${road.id}`;
 }
 
 function renderPersonal() {

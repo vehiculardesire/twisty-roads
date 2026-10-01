@@ -1,6 +1,14 @@
 {
-  "bbox": [45.4, 5.3, 46.95, 8.1],
-  "cellDeg": 0.4,
-  "maxRoads": 900,
-  "out": "site/data/home.json"
+  "about": "Pre-built Western Alps + Jura, in 1° tiles named by their south-west corner (lat_lon).",
+  "tiles": [
+    "43_6", "43_7",
+    "44_5", "44_6", "44_7", "44_8", "44_9", "44_10",
+    "45_5", "45_6", "45_7", "45_8", "45_9", "45_10",
+    "46_5", "46_6", "46_7", "46_8", "46_9", "46_10"
+  ],
+  "cellDeg": 0.5,
+  "pad": 0.15,
+  "maxRoadsPerTile": 250,
+  "minScore": 15,
+  "start": [45.4, 5.3, 46.95, 8.1]
 }

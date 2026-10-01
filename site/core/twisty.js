@@ -1,7 +1,7 @@
 /* Twisty roads engine: OpenStreetMap roads + terrain -> ranked twisty sections.
  *
- * Environment-agnostic ES module, used by the browser scanner (scan-worker.js) and the monthly
- * region build (tools/build-region.mjs). The only environment-specific piece is how a terrain PNG
+ * Environment-agnostic ES module, used by the browser scanner (scan-worker.js) and the
+ * tile build (tools/build-tiles.mjs). The only environment-specific piece is how a terrain PNG
  * becomes elevations, which the caller passes to `new Terrain(loadTile)`.
  *
  *   OSM ways -> chain into roads -> resample every 10 m -> bend radius at each point

@@ -1468,11 +1468,13 @@ function drawProfile() {
     g.fillRect(X(a), M.t, X(b) - X(a), H - M.t - M.b);
   }
 
-  // area in bands of ~1/60 of the road (200 m - 1 km), each coloured by its own average gradient
+  // area in bands of ~1/60 of the road (200 m - 1 km), each coloured by the gradient around it (over 3 bands),
+  // so the colour follows the climb instead of flickering between neighbouring bands
   const n = Math.max(2, Math.round(v.total / clamp(v.total / 60, 200, 1000)));
   for (let i = 0; i < n; i++) {
-    const d0 = (v.total * i) / n, d1 = (v.total * (i + 1)) / n, steps = 12;
-    g.fillStyle = gradeColor((v.at(d1)[2] - v.at(d0)[2]) / (d1 - d0));
+    const d0 = (v.total * i) / n, d1 = (v.total * (i + 1)) / n, steps = 12, w = d1 - d0;
+    const a = Math.max(0, d0 - w), b = Math.min(v.total, d1 + w);
+    g.fillStyle = gradeColor((v.at(b)[2] - v.at(a)[2]) / (b - a));
     g.beginPath();
     g.moveTo(X(d0), Y(e0));
     for (let s = 0; s <= steps; s++) { const dd = d0 + ((d1 - d0) * s) / steps; g.lineTo(X(dd) + (s === steps ? 0.5 : 0), Y(v.at(dd)[2])); }

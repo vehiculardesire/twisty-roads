@@ -27,9 +27,9 @@
   /* bend tightness on the selected road: straight, sweeping, flowing, tight, hairpin-tight */
   --c0: var(--navy-300); --c1: #f7b98d; --c2: #f2843a; --c3: #d4550c; --c4: #7a2d04;
   /* gradient in the profile, gentle to steep */
-  --g1: var(--navy-200); --g2: var(--navy-300); --g3: var(--navy-500); --g4: var(--navy-700);
+  --g1: #d4e9f6; --g2: #9fcde9; --g3: #4f8db8; --g4: #1f4a6e;
   --hot: rgba(242, 107, 29, 0.13);
-  --casing: #ffffff; --sel-casing: #ffffff; --glow: 0; --label: var(--navy-700); --ride: #3d7fae;
+  --casing: #ffffff; --sel-casing: var(--gulf-blue); --glow: 0; --label: var(--navy-700); --ride: #3d7fae;
 }
 
 /* night: the navy map. The panel sits one step darker than the map; inputs and hover one step lighter. */
@@ -41,7 +41,7 @@
   --shadow: 0 10px 28px rgba(2, 6, 10, 0.5);
   --s1: #5e2a10; --s2: #ad470f; --s3: #f26b1d; --s4: #ffc08a;
   --c0: var(--navy-500); --c1: #8a3e14; --c2: #d2560f; --c3: #f58a3c; --c4: #ffd0a8;
-  --g1: var(--navy-700); --g2: var(--navy-600); --g3: var(--navy-400); --g4: var(--navy-200);
+  --g1: #1f3a52; --g2: #2f5f84; --g3: #5b9ccc; --g4: #a9d8f2;
   --hot: rgba(242, 107, 29, 0.16);
   --casing: var(--navy-950); --sel-casing: var(--gulf-blue); --glow: 0.35; --label: var(--navy-300); --ride: var(--gulf-blue);
 }

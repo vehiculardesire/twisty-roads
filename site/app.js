@@ -460,12 +460,12 @@ function addLayers() {
   }, "passes");
 }
 
-// The selected road has its own widths: thin from afar, so stacked hairpins don't merge into a blob, wider up close.
-// [zoom, px] pairs for the line, its casing, and the hot-spot glow.
-const SEL_LINE = [[8, 1.5], [11, 2], [13, 3], [15, 5], [17, 9]];
-const SEL_CASING = [[8, 2.5], [11, 3.5], [13, 5], [15, 8], [17, 13]];
-const SEL_GLOW = [[8, 4], [11, 6], [13, 9], [15, 16], [17, 26]];
-const SEL_BLUR = [[8, 2], [11, 3], [13, 4], [15, 6], [17, 9]];
+// The selected road has its own widths: thin from afar, so stacked hairpins don't merge into a blob, then back to
+// full width close up (from zoom ~13 to 15). [zoom, px] pairs for the line, its casing, and the hot-spot glow.
+const SEL_LINE = [[8, 1.5], [11, 2], [13, 3], [15, 11], [17, 19]];
+const SEL_CASING = [[8, 2.5], [11, 3.5], [13, 5], [15, 18], [17, 30]];
+const SEL_GLOW = [[8, 4], [11, 6], [13, 9], [15, 38], [17, 66]];
+const SEL_BLUR = [[8, 2], [11, 3], [13, 4], [15, 6], [17, 10]];
 const selWidth = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
 
 const scoreRamp = () => ["interpolate", ["linear"], ["get", "score"], 0, css("--s1"), 35, css("--s2"), 65, css("--s3"), 100, css("--s4")];
@@ -750,7 +750,8 @@ let shownMin = 0;
 function setMapFilter() {
   if (!map.getLayer("roads")) return;
   shownMin = minScore();
-  const f = ["all", ["in", ["get", "id"], ["literal", matchingRoads().map((r) => r.id)]], [">=", ["get", "score"], shownMin]];
+  const f = ["all", ["in", ["get", "id"], ["literal", matchingRoads().map((r) => r.id)]], [">=", ["get", "score"], shownMin],
+    ["!=", ["get", "id"], state.sel?.id ?? ""]];          // the selected road is drawn on its own, smoothed
   map.setFilter("roads", f);
   map.setFilter("roads-casing", f);
   map.setFilter("roads-glow", ["all", f, [">=", ["get", "score"], 55]]);
@@ -897,6 +898,7 @@ function select(road, reversed = false) {
   map.setPaintProperty("roads", "line-opacity", 0.45);
   map.setPaintProperty("roads-casing", "line-opacity", 0.4);
   map.setPaintProperty("roads-glow", "line-opacity", 0);
+  setMapFilter();
 
   renderDetail();
   loadWeather(road);
@@ -1037,6 +1039,7 @@ function renderDetail() {
 function deselect() {
   stopFly();
   state.sel = state.view = null;
+  setMapFilter();
   map.getSource("sel").setData(emptyFC);
   map.getSource("sel-runs").setData(emptyFC);
   map.getSource("hot").setData(emptyFC);

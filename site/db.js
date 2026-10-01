@@ -21,8 +21,11 @@ export async function idb(store, op, arg) {
     const tx = db.transaction(store, op === "getAll" || op === "get" ? "readonly" : "readwrite");
     const st = tx.objectStore(store);
     const r = op === "getAll" ? st.getAll() : op === "get" ? st.get(arg) : op === "put" ? st.put(arg) : st.delete(arg);
-    r.onsuccess = () => resolve(r.result);
+    let result;
+    r.onsuccess = () => { result = r.result; };
     r.onerror = () => reject(r.error);
-    tx.oncomplete = tx.onabort = () => db.close();   // an open connection would block the next version upgrade
+    // A successful request can still be rolled back. Callers may delete old scans only after commit.
+    tx.oncomplete = () => { db.close(); resolve(result); };
+    tx.onabort = () => { db.close(); reject(tx.error || r.error || new Error("Storage transaction aborted")); };
   });
 }

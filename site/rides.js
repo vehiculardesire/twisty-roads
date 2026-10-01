@@ -4,6 +4,8 @@ import { idb } from "./db.js";
 const MATCH_M = 35;          // a road point counts as ridden if a track point is this close
 const RIDDEN_SHARE = 0.6;    // ...and a road is ridden if this much of it was
 const CELL = 0.001;          // ~100 m grid for lookups
+const LAT_PAD = MATCH_M / 111320;
+const lonPad = (lat) => LAT_PAD / Math.max(1e-6, Math.cos((lat * Math.PI) / 180));
 
 /** Read a GPX file into { name, points: [[lon, lat], ...] }, thinned to a point every ~20 m. */
 export function parseGPX(text, fileName) {
@@ -44,7 +46,8 @@ export function riddenRoads(roads, rides) {
   if (!grid.size) return new Set();
   const near = (p) => {
     const i = Math.floor(p[0] / CELL), j = Math.floor(p[1] / CELL);
-    for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) {
+    const dx = Math.ceil(lonPad(p[1]) / CELL), dy = Math.ceil(LAT_PAD / CELL);
+    for (let a = i - dx; a <= i + dx; a++) for (let b = j - dy; b <= j + dy; b++) {
       for (const q of grid.get(`${a},${b}`) || []) if (dist(p, q) <= MATCH_M) return true;
     }
     return false;
@@ -55,9 +58,10 @@ export function riddenRoads(roads, rides) {
   });
   const out = new Set();
   for (const r of roads) {
-    // quick reject: no ride's box overlaps the road's box
+    // Allow the same GPS offset here as in the point-distance check below.
     const [w, s, e, n] = r.bb;
-    if (!boxes.some(([bw, bs, be, bn]) => bw <= e && be >= w && bs <= n && bn >= s)) continue;
+    const dx = Math.max(lonPad(s), lonPad(n));
+    if (!boxes.some(([bw, bs, be, bn]) => bw <= e + dx && be >= w - dx && bs <= n + LAT_PAD && bn >= s - LAT_PAD)) continue;
     // sample the road every ~50 m
     let hit = 0, total = 0;
     for (let k = 1; k < r.coords.length; k++) {

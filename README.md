@@ -116,6 +116,15 @@ Run it locally:
 python -m http.server 8765 --directory site
 ```
 
+Run the regression checks (Node 22+; no packages to install):
+
+```bash
+node --test tests/regressions.test.mjs
+```
+
+Incomplete scans add discoveries without replacing earlier coverage. Their status stays visible on the saved-area
+chip after a reload. Scans saved by older versions have unknown coverage until scanned again successfully.
+
 Rebuild the pre-built tiles (Node 20+; about 80 Overpass queries, so be patient). Download each tile, then score
 them all:
 

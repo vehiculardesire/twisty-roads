@@ -1,6 +1,7 @@
 /* Twisty Roads: MapLibre + 3D terrain + elevation profile. No build step. */
 import { ALGO_VERSION, BENDS, bendsAlong, scoreRoad } from "./core/twisty.js";
 import { idb } from "./db.js";
+import { collectRoads, mergeAreas } from "./areas.js";
 import { currentMix, describeMix, isFav, learnTaste, me, rate, ratingOf, setTuned, toggleFav } from "./personal.js";
 import { addRide, loadRides, parseGPX, removeRide, riddenRoads } from "./rides.js";
 import { findStops } from "./stops.js";
@@ -66,7 +67,6 @@ const tiles = new Map();          // loaded pre-built tiles: key -> { roads, pas
 let areas = [];                   // saved scans, newest last
 let rides = savedRides;           // your imported GPX rides
 let ridden = new Set();           // ids of roads you've ridden (from those rides)
-const midIn = ([s, w, n, e], r) => { const [lo, la] = r.coords[r.coords.length >> 1]; return la > s && la < n && lo > w && lo < e; };
 
 function prep(list, key) {
   for (const r of list) {
@@ -96,13 +96,10 @@ async function loadTiles(keys, refresh = true) {
 }
 
 /**
- * Put the road list together: pre-built tiles first, then your scans on top (a scan replaces whatever was inside
- * its box, and a newer scan replaces an older one where they overlap).
+ * Put the road list together. Only complete scans replace prior coverage; partial scans add discoveries.
  */
 function rebuild() {
-  roads = [];
-  for (const t of tiles.values()) roads.push(...t.roads.filter((r) => !areas.some((a) => midIn(a.bbox, r))));
-  areas.forEach((a, i) => roads.push(...a.roads.filter((r) => !areas.slice(i + 1).some((b) => midIn(b.bbox, r)))));
+  roads = collectRoads(tiles.values(), areas);
   const seen = new Set();
   passes = [...tiles.values(), ...areas].flatMap((t) => t.passes).filter((p) => {
     const k = `${p.lon},${p.lat}`;
@@ -114,9 +111,11 @@ function rebuild() {
 
 /** Add (or replace) a scan. */
 function addArea(area, refresh = true) {
+  areas = mergeAreas(areas, area);
+  area = areas[areas.length - 1];
   prep(area.roads, area.key);
-  areas = [...areas.filter((a) => a.key !== area.key), area];
   if (refresh) rebuild();
+  return area;
 }
 
 function removeArea(key) {
@@ -560,19 +559,17 @@ function runScan(lat, lon, radiusKm, label, selectId = null) {
     scanning = false;
     if (msg.type === "error") return setScanUI(false, msg.message, true);
 
-    const area = {
+    const incoming = {
       key: areaKey(lat, lon, radiusKm), v: ALGO_VERSION, date: Date.now(),
       label: label || `${lat.toFixed(2)}, ${lon.toFixed(2)}`, radius: radiusKm, bbox,
-      roads: msg.roads, passes: msg.passes,
+      roads: msg.roads, passes: msg.passes, missing: msg.missing,
     };
-    // a bigger scan around the same place replaces the smaller ones it covers
-    const covers = ([s, w, n, e], [s2, w2, n2, e2]) => s <= s2 + 1e-6 && w <= w2 + 1e-6 && n >= n2 - 1e-6 && e >= e2 - 1e-6;
-    for (const old of areas.filter((a) => a.key !== area.key && covers(bbox, a.bbox))) {
-      areas = areas.filter((a) => a !== old);
-      idb("areas", "delete", old.key).catch(() => {});
-    }
-    addArea(area);
-    idb("areas", "put", { ...area, roads: msg.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, line: _l, scoredFor: _k, ...r }) => r) }).catch(() => {});
+    const previous = areas;
+    const area = addArea(incoming);
+    const removed = previous.filter((old) => !areas.some((a) => a.key === old.key));
+    // Save the replacement before removing older records, so a failed save retains the old scans.
+    idb("areas", "put", { ...area, roads: area.roads.map(({ area: _a, bb: _b, inBends: _i, fx: _f, scenery: _s, line: _l, scoredFor: _k, ...r }) => r) })
+      .then(() => Promise.all(removed.map((old) => idb("areas", "delete", old.key)))).catch(() => {});
     refreshMapData();
     renderAreas();
 
@@ -642,7 +639,7 @@ function renderAreas() {
   el.hidden = !areas.length;
   el.innerHTML = areas.length ? `<span class="areas-label">Your areas</span>` + [...areas].reverse().map((a) => `
     <span class="area-chip" data-key="${esc(a.key)}">
-      <button class="area-go" title="Show on map">${esc(a.label)} <small>${a.radius} km · ${a.roads.length}</small></button>
+      <button class="area-go" title="Show on map">${esc(a.label)} <small>${a.radius} km · ${a.roads.length}${a.missing === 0 ? "" : a.missing > 0 ? ` · incomplete (${a.missing} missing)` : " · coverage unknown"}</small></button>
       <button class="area-x" title="Forget this area" aria-label="Forget ${esc(a.label)}">✕</button>
     </span>`).join("") : "";
 }

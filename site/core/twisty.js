@@ -194,7 +194,12 @@ export function scoreRoad(road, taste = 0.5, mix = NO_MIX) {
   // 5 km or more, not mostly narrow, and not through villages.
   let bit = null;
   const B = Math.round(BIT_KM / binKm), pU = pre(bins.map((x) => x.u));
-  const proper = /^([A-Z]{1,4} ?)?\d/.test(road.road || "") || !!road.pass;
+  // New scans keep the OSM reference separately. Older tiles/scans only have display text,
+  // where the reference can be either the title or the first part of the subtitle.
+  const numbered = /^([A-Z]{1,4} ?)?\d/;
+  const proper = !!road.pass || ("ref" in road
+    ? numbered.test(road.ref || "")
+    : [road.name, road.road].some((s) => numbered.test(s || "")));
   const b = proper && nb >= B && (road.warn?.narrow ?? 0) < 20 ? bestOf(B, (i) => sum(pU, i, i + B) / B <= 0.2) : null;
   if (b) {
     const v = (100 * (b.fun / BIT_KM) * WINDOW_KM) / (SCORE_REF * tasteScale(taste, mix));
@@ -847,7 +852,7 @@ export async function findTwisties(elements, bbox, terrain, { maxRoads = 400, on
     }
     const road = {
       id: roadId(coords),
-      name: title, road: sub || null,
+      name: title, road: sub || null, ref,
       from: towns[0], to: towns[1] !== towns[0] ? towns[1] : null,
       len: Math.round(c.length),
       bends: c.bends.map((km) => +km.toFixed(2)),

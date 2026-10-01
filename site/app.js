@@ -17,7 +17,22 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
-const TERRAIN_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const TERRAIN_TILES = "sealevel://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+
+// Terrarium tiles include the sea floor (over 2 km deep off Nice), so in 3D the sea sank into a shaded canyon.
+// Flatten everything below sea level to 0 (terrarium: red < 128 means below 0 m) before MapLibre sees it.
+maplibregl.addProtocol("sealevel", async ({ url }, abort) => {
+  const r = await fetch(url.replace("sealevel://", "https://"), { signal: abort.signal });
+  if (!r.ok) throw new Error(`terrain ${r.status}`);
+  const img = await createImageBitmap(await r.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  const g = new OffscreenCanvas(img.width, img.height).getContext("2d", { willReadFrequently: true });
+  g.drawImage(img, 0, 0);
+  const px = g.getImageData(0, 0, img.width, img.height);
+  const d = px.data;
+  for (let i = 0; i < d.length; i += 4) if (d[i] < 128) { d[i] = 128; d[i + 1] = d[i + 2] = 0; }
+  g.putImageData(px, 0, 0);
+  return { data: await (await g.canvas.convertToBlob()).arrayBuffer() };
+});
 const BEND_NAMES = ["Straight", ...BENDS.map(([, n]) => n)];
 const BEND_RADII = ["", ...BENDS.map(([r]) => `under ${r} m radius`)];
 const RIDING_SPEED = 80;   // km/h, for "feels like"
